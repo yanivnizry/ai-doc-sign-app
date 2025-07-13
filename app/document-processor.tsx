@@ -4,7 +4,7 @@ import * as Sharing from 'expo-sharing';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { AIProcessingResult, aiService, DocumentAnalysis, FormField, Question } from '../services/aiService';
+import aiService, { AIProcessingResult, DocumentAnalysis, FormField, Question } from '../services/aiService';
 
 export default function DocumentProcessorScreen() {
   const params = useLocalSearchParams();
@@ -22,7 +22,26 @@ export default function DocumentProcessorScreen() {
 
   useEffect(() => {
     if (params.uri) {
-      setDocumentType((params.type as 'pdf' | 'docx') || 'pdf');
+      // Determine document type from file extension or mime type
+      let detectedType: 'pdf' | 'docx' = 'pdf';
+      const uri = params.uri as string;
+      const name = params.name as string;
+      
+      if (uri.includes('.docx') || name?.includes('.docx') || params.mimeType?.includes('wordprocessingml')) {
+        detectedType = 'docx';
+      } else if (uri.includes('.pdf') || name?.includes('.pdf') || params.mimeType?.includes('pdf')) {
+        detectedType = 'pdf';
+      }
+      
+      console.log('Document type detection:', {
+        uri,
+        name,
+        mimeType: params.mimeType,
+        detectedType,
+        paramType: params.type
+      });
+      
+      setDocumentType(detectedType);
       analyzeDocument();
     }
   }, [params.uri]);
@@ -30,6 +49,8 @@ export default function DocumentProcessorScreen() {
   const analyzeDocument = async () => {
     try {
       setIsAnalyzing(true);
+      
+      console.log('Starting analysis with document type:', documentType);
       
       // Use the enhanced AI service for document analysis
       const aiAnalysis = await aiService.analyzeDocument(params.uri as string, documentType);
@@ -170,24 +191,28 @@ export default function DocumentProcessorScreen() {
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Form Fields Found ({formFields.length})</Text>
-        {formFields.map((field) => (
-          <View key={field.id} style={styles.fieldItem}>
-            <View style={styles.fieldHeader}>
-              <Ionicons 
-                name={field.type === 'signature' ? 'create' : field.type === 'checkbox' ? 'checkbox' : 'text'} 
-                size={20} 
-                color="#007AFF" 
-              />
-              <Text style={styles.fieldLabel}>{field.label}</Text>
-              {field.required && <Text style={styles.requiredBadge}>Required</Text>}
-              <Text style={styles.confidenceBadge}>{Math.round(field.confidence * 100)}%</Text>
+        {formFields.length === 0 ? (
+          <Text style={styles.noFieldsText}>No form fields detected in this document.</Text>
+        ) : (
+          formFields.map((field) => (
+            <View key={field.id} style={styles.fieldItem}>
+              <View style={styles.fieldHeader}>
+                <Ionicons 
+                  name={field.type === 'signature' ? 'create' : field.type === 'checkbox' ? 'checkbox' : 'text'} 
+                  size={20} 
+                  color="#007AFF" 
+                />
+                <Text style={styles.fieldLabel}>{field.label}</Text>
+                {field.required && <Text style={styles.requiredBadge}>Required</Text>}
+                <Text style={styles.confidenceBadge}>{Math.round(field.confidence * 100)}%</Text>
+              </View>
+              <Text style={styles.fieldType}>{field.type.toUpperCase()}</Text>
+              {field.suggestions && field.suggestions.length > 0 && (
+                <Text style={styles.suggestionsText}>AI Suggestions: {field.suggestions.slice(0, 2).join(', ')}</Text>
+              )}
             </View>
-            <Text style={styles.fieldType}>{field.type.toUpperCase()}</Text>
-            {field.suggestions && field.suggestions.length > 0 && (
-              <Text style={styles.suggestionsText}>AI Suggestions: {field.suggestions.slice(0, 2).join(', ')}</Text>
-            )}
-          </View>
-        ))}
+          ))
+        )}
       </View>
 
       <View style={styles.section}>
@@ -554,5 +579,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '500',
     color: '#666',
+  },
+  noFieldsText: {
+    fontSize: 14,
+    color: '#666',
+    fontStyle: 'italic',
+    textAlign: 'center',
+    marginVertical: 20,
   },
 }); 

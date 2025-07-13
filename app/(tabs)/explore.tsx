@@ -8,8 +8,8 @@ const ExploreScreen = () => {
     {
       id: 'ai-analysis',
       title: '🧠 Real AI Analysis',
-      subtitle: 'Grok 4 Integration',
-      description: 'Advanced document analysis using Grok 4 model for intelligent form detection and processing.',
+      subtitle: 'Local LLM Integration',
+      description: 'Advanced document analysis using Local LLM for intelligent form detection and processing.',
       icon: 'brain',
       color: '#6366f1',
       details: [
@@ -123,8 +123,8 @@ const ExploreScreen = () => {
     {
       category: 'AI Models',
       capabilities: [
-        'Grok 4 integration',
-        'Configurable AI models (grok-4-0709)',
+        'Local LLM integration',
+        'Configurable AI models (llama2, mistral, etc.)',
         'Customizable processing parameters',
         'Fallback analysis when AI unavailable',
         'Real-time processing optimization',
@@ -148,7 +148,7 @@ const ExploreScreen = () => {
   const handleSetupAI = () => {
     Alert.alert(
       'Setup Real AI',
-      'To enable real AI functionality:\n\n1. Get a Grok API key from console.x.ai\n2. Create a .env file in the project root\n3. Add: EXPO_PUBLIC_GROK_API_KEY=your_key_here\n4. Restart the app',
+      'To enable real AI functionality:\n\n1. Get Ollama from ollama.ai\n2. Create a .env file in the project root\n3. Add: EXPO_PUBLIC_LOCAL_LLM_URL=http://localhost:11434\n4. Restart the app',
       [
         { text: 'Get API Key', onPress: () => console.log('Get API key') },
         { text: 'OK', style: 'default' }
@@ -170,7 +170,7 @@ const ExploreScreen = () => {
         <View style={styles.setupContent}>
           <Text style={styles.setupTitle}>Enable Real AI</Text>
           <Text style={styles.setupDescription}>
-            Set up Grok 4 API for advanced document analysis
+            Set up Local LLM for advanced document analysis
           </Text>
         </View>
         <TouchableOpacity style={styles.setupButton} onPress={handleSetupAI}>

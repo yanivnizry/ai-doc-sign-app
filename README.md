@@ -5,7 +5,7 @@ A React Native app that uses **real AI** to intelligently analyze, fill, and sig
 ## ✨ Features
 
 ### 🧠 Real AI Integration
-- **Grok 4 Integration**: Real AI analysis using Grok 4 model
+- **Local LLM Integration**: Real AI analysis using Local LLM
 - **Multi-language Support**: Supports 10+ languages including Hebrew, Arabic, Chinese, Japanese, Korean, Russian, Thai, Hindi, and more
 - **Intelligent Document Analysis**: AI automatically detects document type, language, and extracts form fields
 - **Smart Form Filling**: AI suggests and fills form fields based on document context
@@ -43,24 +43,24 @@ A React Native app that uses **real AI** to intelligently analyze, fill, and sig
    npm install
    ```
 
-3. **Set up Grok 4 API (Required for Real AI)**
+3. **Set up Local LLM (Required for Real AI)**
    
    Create a `.env` file in the root directory:
    ```bash
-   # Grok 4 API Configuration
-   EXPO_PUBLIC_GROK_API_KEY=your_grok_api_key_here
+   # Local LLM Configuration
+   EXPO_PUBLIC_LOCAL_LLM_URL=http://localhost:11434
    
-   # Optional: Configure AI model (default: grok-4-0709)
-   EXPO_PUBLIC_GROK_MODEL=grok-4-0709
+   # Optional: Configure AI model (default: llama2)
+   EXPO_PUBLIC_LOCAL_LLM_MODEL=llama2
    
    # Optional: Configure max tokens (default: 3000)
-   EXPO_PUBLIC_GROK_MAX_TOKENS=3000
+   EXPO_PUBLIC_LOCAL_LLM_MAX_TOKENS=3000
    ```
    
-   **Get your Grok API key:**
-   - Visit [X.AI Console](https://console.x.ai/)
-   - Create a new API key
-   - Add it to your `.env` file
+   **Get your Local LLM setup:**
+   1. Install Ollama from ollama.ai(https://console.x.ai/)
+   2. Run: ollama pull llama2
+   3. Add the configuration to your `.env` file
 
 4. **Start the development server**
    ```bash
@@ -96,8 +96,8 @@ The AI automatically detects the document language using character analysis and 
 
 ## 🤖 Real AI vs Fallback Mode
 
-### Real AI Mode (With Grok API Key)
-- **Full AI Analysis**: Grok 4 analyzes document content
+### Real AI Mode (With Local LLM)
+- **Full AI Analysis**: Local LLM analyzes document content
 - **Intelligent Insights**: AI provides detailed document insights
 - **Smart Suggestions**: Context-aware form filling suggestions
 - **Risk Assessment**: AI evaluates document complexity and risks
@@ -133,13 +133,13 @@ components/
 
 | Variable | Description | Default | Required |
 |----------|-------------|---------|----------|
-| `EXPO_PUBLIC_GROK_API_KEY` | Grok API key | - | ✅ |
-| `EXPO_PUBLIC_GROK_MODEL` | AI model to use | `grok-4-0709` | ❌ |
-| `EXPO_PUBLIC_GROK_MAX_TOKENS` | Max tokens for AI responses | `3000` | ❌ |
+| `EXPO_PUBLIC_LOCAL_LLM_URL | Local LLM URL | http://localhost:11434 | ✅
+| `EXPO_PUBLIC_LOCAL_LLM_MODEL | AI model to use | llama2 | ❌
+| `EXPO_PUBLIC_LOCAL_LLM_MAX_TOKENS | Max tokens for AI responses | 3000 | ❌
 
 ### AI Model Options
-- `grok-4-0709`: Latest Grok 4 model, best for complex documents
-- `grok-beta`: Beta version for testing
+- `llama2 | Latest Llama 2 model, best for complex documents
+- `mistral:7b | Good alternative model
 
 ## 🎯 Use Cases
 
@@ -170,7 +170,7 @@ components/
 ## 🔒 Privacy & Security
 
 - **Local Processing**: Document content is processed locally when possible
-- **Secure API Calls**: Grok API calls use secure HTTPS
+- **Secure Local Processing | All processing happens locally
 - **No Data Storage**: Documents are not stored on servers
 - **User Control**: Users control what data is sent to AI services
 
@@ -248,4 +248,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ---
 
-**Built with ❤️ using React Native, Expo, and Grok 4**
+**Built with ❤️ using React Native, Expo, and Local LLM**
