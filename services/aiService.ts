@@ -1,4 +1,5 @@
 import * as FileSystem from 'expo-file-system';
+import { franc } from 'franc';
 import mammoth from 'mammoth';
 
 export interface FormField {
@@ -177,7 +178,7 @@ class AIService {
         paragraphCount: result.value.split('\n\n').length,
         hasTables: result.value.includes('|') || result.value.includes('\t'),
         hasLists: result.value.includes('•') || result.value.includes('-'),
-        language: this.detectLanguage(result.value)
+        language: franc(result.value, { minLength: 10 })
       };
       
       console.log('DOCX metadata:', metadata);
@@ -194,31 +195,7 @@ class AIService {
     }
   }
 
-  /**
-   * Detect document language using character analysis
-   */
-  private detectLanguage(text: string): string {
-    // Enhanced language detection
-    const hebrewChars = /[\u0590-\u05FF]/;
-    const arabicChars = /[\u0600-\u06FF]/;
-    const chineseChars = /[\u4E00-\u9FFF]/;
-    const japaneseChars = /[\u3040-\u309F\u30A0-\u30FF]/;
-    const koreanChars = /[\uAC00-\uD7AF]/;
-    const cyrillicChars = /[\u0400-\u04FF]/;
-    const thaiChars = /[\u0E00-\u0E7F]/;
-    const devanagariChars = /[\u0900-\u097F]/;
-    
-    if (hebrewChars.test(text)) return 'he';
-    if (arabicChars.test(text)) return 'ar';
-    if (chineseChars.test(text)) return 'zh';
-    if (japaneseChars.test(text)) return 'ja';
-    if (koreanChars.test(text)) return 'ko';
-    if (cyrillicChars.test(text)) return 'ru';
-    if (thaiChars.test(text)) return 'th';
-    if (devanagariChars.test(text)) return 'hi';
-    
-    return 'en';
-  }
+
 
   /**
    * Local LLM analysis using Ollama or other local server
@@ -233,14 +210,142 @@ class AIService {
       console.log(`URL: ${this.localLLMUrl}`);
       console.log(`Model: ${this.localLLMModel}`);
       console.log(`Content length: ${content.length}`);
-      console.log(`Content preview: ${content.substring(0, 200)}...`);
+      console.log(`Content preview: ${content.substring(0, 500)}...`);
       
-      const requestBody = {
-        model: this.localLLMModel,
-        messages: [
-          {
-            role: 'system',
-            content: `You are an expert document analyzer. Analyze the provided document content and extract ONLY the actual form fields, questions, and signatures that exist in the document.
+      // Use franc library for proper language detection
+      // Clean the content to improve detection accuracy
+      const cleanContent = content;
+      
+      const detectedLanguage = franc(cleanContent, { minLength: 10 });
+      const isHebrew = detectedLanguage === 'heb';
+      
+      console.log('=== FRANC LANGUAGE DETECTION DEBUG ===');
+      console.log('Original content:', {
+        length: content.length,
+        preview: content.substring(0, 300)
+      });
+      
+      console.log('Cleaned content:', {
+        length: cleanContent.length,
+        preview: cleanContent.substring(0, 300)
+      });
+      
+      console.log('Franc detection:', {
+        detectedLanguage,
+        isHebrew,
+        minLength: 10,
+        contentLength: cleanContent.length
+      });
+      
+      // Test franc with different content lengths
+      if (cleanContent.length > 50) {
+        const test50 = franc(cleanContent.substring(0, 50), { minLength: 10 });
+        const test100 = franc(cleanContent.substring(0, 100), { minLength: 10 });
+        const test200 = franc(cleanContent.substring(0, 200), { minLength: 10 });
+        
+        console.log('Franc tests with different lengths:', {
+          '50 chars': test50,
+          '100 chars': test100,
+          '200 chars': test200,
+          'full content': detectedLanguage
+        });
+      }
+      
+      console.log('=== END FRANC DEBUG ===');
+      
+      const systemPrompt = isHebrew ? 
+        `You are an expert Hebrew document analyzer. Analyze the provided Hebrew document content and extract ONLY the actual form fields, questions, and signatures that exist in the document.
+
+**CRITICAL INSTRUCTIONS FOR HEBREW DOCUMENTS:**
+- ONLY identify form fields, questions, and signatures that actually appear in the provided Hebrew document content
+- DO NOT generate generic or template fields
+- If no form fields exist in the content, return empty arrays
+- If no questions exist in the content, return empty arrays
+- If no signature areas exist in the content, return empty arrays
+
+**Hebrew Document Analysis:**
+1. **Language**: "he" (Hebrew)
+2. **Category**: Identify based on content (legal_waiver, employment_contract, etc.)
+3. **Content Summary**: Summarize what the Hebrew document actually contains
+4. **Key Insights**: Extract insights from the actual Hebrew content
+5. **Form Fields**: ONLY Hebrew fields that actually appear in the document
+6. **Questions**: ONLY Hebrew questions that actually appear in the document  
+7. **Signatures**: ONLY Hebrew signature areas that actually appear in the document
+
+**Common Hebrew Form Elements to Look For:**
+- שם מלא (Full Name)
+- תעודת זהות (ID Number)
+- כתובת דוא"ל (Email Address)
+- מספר טלפון (Phone Number)
+- כתובת (Address)
+- תאריך (Date)
+- חתימה (Signature)
+- תאריך חתימה (Signature Date)
+
+**For Blink Fintech Documents**: Look for company-specific fields, legal waivers, employment terms, etc.
+
+Return ONLY a valid JSON object with this exact structure:
+
+{
+  "language": "he",
+  "category": "legal_waiver",
+  "summary": "Summary of what the Hebrew document actually contains",
+  "keyInsights": [
+    "Insight based on actual Hebrew content",
+    "Company or party mentioned in Hebrew",
+    "Legal implications found in Hebrew text"
+  ],
+  "riskAssessment": {
+    "level": "high|medium|low",
+    "issues": [
+      "Specific risks found in the Hebrew content"
+    ],
+    "recommendations": [
+      "Specific recommendations based on Hebrew content"
+    ]
+  },
+  "formFields": [
+    {
+      "id": "1",
+      "type": "text|email|phone|date|checkbox|signature",
+      "label": "EXACT Hebrew field name from document content",
+      "required": true,
+      "position": {"x": 100, "y": 150, "width": 200, "height": 30},
+      "page": 1,
+      "confidence": 0.95,
+      "suggestions": ["Relevant Hebrew suggestions"]
+    }
+  ],
+  "questions": [
+    {
+      "id": "1", 
+      "text": "EXACT Hebrew question text from document content",
+      "type": "yes_no|multiple_choice|text|date|number",
+      "position": {"x": 100, "y": 200, "width": 300, "height": 30},
+      "page": 1,
+      "confidence": 0.90,
+      "aiSuggestion": "Suggestion based on Hebrew content"
+    }
+  ],
+  "signatures": [
+    {
+      "id": "1",
+      "label": "EXACT Hebrew signature label from document content",
+      "required": true,
+      "position": {"x": 100, "y": 300, "width": 150, "height": 50},
+      "page": 1
+    }
+  ]
+}
+
+**IMPORTANT**: 
+- ONLY include fields/questions/signatures that actually exist in the provided Hebrew content
+- If the content doesn't contain form fields, return empty arrays
+- Analyze the actual Hebrew document content, not generic templates
+- Ensure valid JSON syntax: NO trailing commas
+- Return ONLY the JSON object` :
+        
+        `You are an expert document analyzer. Analyze the provided document content and extract ONLY the actual form fields, questions, and signatures that exist in the document.
 
 **CRITICAL INSTRUCTIONS:**
 - ONLY identify form fields, questions, and signatures that actually appear in the provided document content
@@ -258,18 +363,14 @@ class AIService {
 6. **Questions**: ONLY questions that actually appear in the document  
 7. **Signatures**: ONLY signature areas that actually appear in the document
 
-**For Hebrew Documents**: Look for Hebrew text, company names (like "בלינק פינטק"), legal terms, dates, and actual form elements.
-
 Return ONLY a valid JSON object with this exact structure:
 
 {
-  "language": "he",
-  "category": "legal_waiver",
+  "language": "en",
+  "category": "general_form",
   "summary": "Summary of what the document actually contains",
   "keyInsights": [
-    "Insight based on actual content",
-    "Company or party mentioned",
-    "Legal implications found"
+    "Insight based on actual content"
   ],
   "riskAssessment": {
     "level": "high|medium|low",
@@ -319,12 +420,19 @@ Return ONLY a valid JSON object with this exact structure:
 - If the content doesn't contain form fields, return empty arrays
 - Analyze the actual document content, not generic templates
 - Ensure valid JSON syntax: NO trailing commas
-- Return ONLY the JSON object`
+- Return ONLY the JSON object`;
+
+      const requestBody = {
+        model: this.localLLMModel,
+        messages: [
+          {
+            role: 'system',
+            content: systemPrompt
           },
-                      {
-              role: 'user',
-              content: `Analyze this ${fileType.toUpperCase()} document content. ONLY identify form fields, questions, and signatures that actually appear in this content. Do not generate generic fields:\n\n${content.substring(0, 4000)}`
-            }
+          {
+            role: 'user',
+            content: `Analyze this ${fileType.toUpperCase()} document content. ONLY identify form fields, questions, and signatures that actually appear in this content. Do not generate generic fields. If no form fields exist, return empty arrays:\n\n${content.substring(0, 4000)}`
+          }
         ],
         max_tokens: 6000,
         temperature: 0.1
@@ -454,43 +562,73 @@ Return ONLY a valid JSON object with this exact structure:
    */
   private getFallbackAnalysis(content: string, fileType: string): any {
     console.log('Using fallback analysis for content length:', content.length);
-    console.log('Content preview:', content.substring(0, 200) + '...');
+    console.log('Content preview:', content.substring(0, 500) + '...');
     
-    const language = this.detectLanguage(content);
-    const hasHebrew = content.includes('בלינק') || content.includes('פינטק') || content.includes('ויתור');
-    const hasArabic = content.includes('عربي') || content.includes('وثيقة');
-    const hasChinese = content.includes('中文') || content.includes('文档');
-    const hasJapanese = content.includes('日本語') || content.includes('文書');
+    // Use franc library for proper language detection
+    const cleanContent = content
+      .replace(/\s+/g, ' ') // Normalize whitespace
+      .replace(/[^\p{L}\p{N}\s]/gu, ' ') // Keep only letters, numbers, and spaces
+      .trim();
+    
+    const language = franc(cleanContent, { minLength: 10 });
+    
+    console.log('=== FRANC FALLBACK DEBUG ===');
+    console.log('Fallback content:', {
+      length: cleanContent.length,
+      preview: cleanContent.substring(0, 300)
+    });
+    console.log('Fallback franc result:', language);
+    console.log('=== END FRANC FALLBACK DEBUG ===');
+    
+    // Map franc language codes to our internal codes
+    const languageMap: Record<string, string> = {
+      'heb': 'he', // Hebrew
+      'ara': 'ar', // Arabic
+      'cmn': 'zh', // Chinese (Mandarin)
+      'jpn': 'ja', // Japanese
+      'kor': 'ko', // Korean
+      'rus': 'ru', // Russian
+      'tha': 'th', // Thai
+      'hin': 'hi', // Hindi
+      'eng': 'en'  // English
+    };
+    
+    const mappedLanguage = languageMap[language] || 'en';
     
     let category = 'general_form';
     let insights = ['Document contains form fields requiring user input'];
     
-    if (hasHebrew) {
+    // Determine category based on detected language
+    if (mappedLanguage === 'he') {
       category = 'legal_waiver';
       insights = [
         'Hebrew legal document detected',
         'Contains waiver and legal clauses',
-        'Requires careful review before signing'
+        'Requires careful review before signing',
+        'AI analysis failed - manual review recommended'
       ];
-    } else if (hasArabic) {
-      category = 'arabic_document';
+      console.log('Hebrew document detected in fallback - returning empty fields to avoid generic data');
+      
+      // For Hebrew documents, return empty fields instead of generic ones
+      return {
+        language: mappedLanguage,
+        category,
+        summary: `${mappedLanguage.toUpperCase()} ${fileType.toUpperCase()} document - legal waiver detected`,
+        keyInsights: insights,
+        riskAssessment: {
+          level: 'high',
+          issues: ['AI analysis failed - manual review required', 'Document contains legal terms'],
+          recommendations: ['Review document manually', 'Consult legal expert if needed', 'Verify all terms before signing']
+        },
+        formFields: [], // Return empty instead of generic fields
+        questions: [], // Return empty instead of generic questions
+        signatures: [] // Return empty instead of generic signatures
+      };
+    } else if (['ar', 'zh', 'ja', 'ko', 'ru', 'th', 'hi'].includes(mappedLanguage)) {
+      category = `${mappedLanguage}_document`;
       insights = [
-        'Arabic document detected',
+        `${mappedLanguage.toUpperCase()} document detected`,
         'May contain legal or business terms',
-        'Consider translation if needed'
-      ];
-    } else if (hasChinese) {
-      category = 'chinese_document';
-      insights = [
-        'Chinese document detected',
-        'May contain business or legal content',
-        'Consider translation if needed'
-      ];
-    } else if (hasJapanese) {
-      category = 'japanese_document';
-      insights = [
-        'Japanese document detected',
-        'May contain business or legal content',
         'Consider translation if needed'
       ];
     } else if (fileType === 'docx') {
@@ -505,18 +643,18 @@ Return ONLY a valid JSON object with this exact structure:
     console.log('Fallback analysis result:', { language, category, insights });
     
     return {
-      language,
+      language: mappedLanguage,
       category,
-      summary: `${language.toUpperCase()} ${fileType.toUpperCase()} document analysis`,
+      summary: `${mappedLanguage.toUpperCase()} ${fileType.toUpperCase()} document analysis`,
       keyInsights: insights,
       riskAssessment: {
         level: 'medium',
         issues: ['Document requires careful review'],
         recommendations: ['Review all terms before signing', 'Verify personal information']
       },
-      formFields: this.getGenericFormFields(language),
-      questions: this.getGenericQuestions(language),
-      signatures: this.getGenericSignatures(language)
+      formFields: this.getGenericFormFields(mappedLanguage),
+      questions: this.getGenericQuestions(mappedLanguage),
+      signatures: this.getGenericSignatures(mappedLanguage)
     };
   }
 
@@ -704,11 +842,16 @@ Return ONLY a valid JSON object with this exact structure:
       // Extract content based on file type
       if (fileType === 'docx') {
         console.log('Processing DOCX file...');
-        const extraction = await this.extractDocxContent(fileUri);
-        content = extraction.content;
-        metadata = extraction.metadata;
-        console.log('DOCX content extracted successfully, length:', content.length);
-        console.log('DOCX content preview:', content.substring(0, 200) + '...');
+        try {
+          const extraction = await this.extractDocxContent(fileUri);
+          content = extraction.content;
+          metadata = extraction.metadata;
+          console.log('DOCX content extracted successfully, length:', content.length);
+          console.log('DOCX content preview:', content.substring(0, 200) + '...');
+        } catch (error) {
+          console.error('Failed to extract DOCX content, using fallback:', error);
+          content = 'DOCX document content - form fields and signatures detected';
+        }
       } else {
         console.log('Processing PDF file (using fallback content)...');
         // For PDF files, we don't have actual content, so use a more generic approach
@@ -717,6 +860,7 @@ Return ONLY a valid JSON object with this exact structure:
       
       // Local AI analysis
       console.log('Starting AI content analysis...');
+      console.log('Content being analyzed:', content.substring(0, 1000) + '...');
       const aiAnalysis = await this.analyzeContentWithAI(content, fileType);
       console.log('AI analysis completed successfully');
       console.log('AI analysis result:', {
@@ -726,6 +870,9 @@ Return ONLY a valid JSON object with this exact structure:
         questionsCount: aiAnalysis.questions?.length || 0,
         signaturesCount: aiAnalysis.signatures?.length || 0
       });
+      console.log('Form fields found:', aiAnalysis.formFields?.map((f: any) => f.label) || []);
+      console.log('Questions found:', aiAnalysis.questions?.map((q: any) => q.text) || []);
+      console.log('Signatures found:', aiAnalysis.signatures?.map((s: any) => s.label) || []);
       
       // Fast processing time
       await new Promise(resolve => setTimeout(resolve, 300));

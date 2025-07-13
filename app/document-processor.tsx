@@ -2,8 +2,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import * as Sharing from 'expo-sharing';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import SignatureDrawer from '../components/SignatureDrawer';
 import aiService, { AIProcessingResult, DocumentAnalysis, FormField, Question } from '../services/aiService';
 
 export default function DocumentProcessorScreen() {
@@ -13,12 +14,14 @@ export default function DocumentProcessorScreen() {
   const [documentInfo, setDocumentInfo] = useState<any>(null);
   const [formFields, setFormFields] = useState<FormField[]>([]);
   const [questions, setQuestions] = useState<Question[]>([]);
-  const [currentStep, setCurrentStep] = useState<'analyzing' | 'reviewing' | 'signing' | 'complete'>('analyzing');
+  const [currentStep, setCurrentStep] = useState<'analyzing' | 'reviewing' | 'filling' | 'signing' | 'complete'>('analyzing');
   const [documentType, setDocumentType] = useState<'pdf' | 'docx'>('pdf');
   const [documentContent, setDocumentContent] = useState<string>('');
   const [analysis, setAnalysis] = useState<DocumentAnalysis | null>(null);
   const [processingResult, setProcessingResult] = useState<AIProcessingResult | null>(null);
   const [insights, setInsights] = useState<{ insights: string[]; recommendations: string[]; riskLevel: 'low' | 'medium' | 'high' } | null>(null);
+  const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
+  const [questionAnswers, setQuestionAnswers] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (params.uri) {
@@ -42,22 +45,24 @@ export default function DocumentProcessorScreen() {
       });
       
       setDocumentType(detectedType);
-      analyzeDocument();
+      // Pass the detected type directly to avoid closure issues
+      analyzeDocument(detectedType);
     }
   }, [params.uri]);
 
-  const analyzeDocument = async () => {
+  const analyzeDocument = async (docType?: 'pdf' | 'docx') => {
     try {
       setIsAnalyzing(true);
       
-      console.log('Starting analysis with document type:', documentType);
+      const typeToUse = docType || documentType;
+      console.log('Starting analysis with document type:', typeToUse);
       
       // Use the enhanced AI service for document analysis
-      const aiAnalysis = await aiService.analyzeDocument(params.uri as string, documentType);
+      const aiAnalysis = await aiService.analyzeDocument(params.uri as string, typeToUse);
       setAnalysis(aiAnalysis);
       
       // Extract content for DOCX files
-      if (documentType === 'docx' && aiAnalysis.content) {
+      if (typeToUse === 'docx' && aiAnalysis.content) {
         setDocumentContent(aiAnalysis.content);
         console.log('DOCX Content extracted:', aiAnalysis.content.substring(0, 200) + '...');
       }
@@ -68,7 +73,7 @@ export default function DocumentProcessorScreen() {
         name: params.name || 'Document',
         size: params.size || 0,
         pages: aiAnalysis.documentInfo.pages,
-        type: documentType.toUpperCase(),
+        type: typeToUse.toUpperCase(),
         language: aiAnalysis.documentInfo.language,
         category: aiAnalysis.documentInfo.category
       });
@@ -79,7 +84,8 @@ export default function DocumentProcessorScreen() {
       
       setCurrentStep('reviewing');
     } catch (error) {
-      Alert.alert('Error', `Failed to analyze ${documentType.toUpperCase()} document`);
+      const typeToUse = docType || documentType;
+      Alert.alert('Error', `Failed to analyze ${typeToUse.toUpperCase()} document`);
       console.error('Analysis error:', error);
     } finally {
       setIsAnalyzing(false);
@@ -91,22 +97,32 @@ export default function DocumentProcessorScreen() {
       setIsProcessing(true);
       setCurrentStep('signing');
       
+      // Prepare user data from filled fields and answers
+      const userData: Record<string, any> = {};
+      
+      // Add field values
+      Object.keys(fieldValues).forEach(fieldId => {
+        const field = formFields.find(f => f.id === fieldId);
+        if (field) {
+          userData[field.label.toLowerCase().replace(/\s+/g, '_')] = fieldValues[fieldId];
+        }
+      });
+      
+      // Add question answers
+      Object.keys(questionAnswers).forEach(questionId => {
+        const question = questions.find(q => q.id === questionId);
+        if (question) {
+          userData[`question_${questionId}`] = questionAnswers[questionId];
+        }
+      });
+      
+      console.log('Processing document with user data:', userData);
+      
       // Use the enhanced AI service for complete document processing
       const result = await aiService.processDocument(
         params.uri as string,
         documentType,
-        {
-          name: 'John Doe',
-          email: 'john.doe@example.com',
-          phone: '+1 (555) 123-4567',
-          occupation: 'Software Engineer',
-          experience: '5 years',
-          preferences: {
-            salary_range: '$70,000 - $90,000',
-            location_preference: 'Remote',
-            source: 'LinkedIn'
-          }
-        }
+        userData
       );
       
       setProcessingResult(result);
@@ -234,6 +250,158 @@ export default function DocumentProcessorScreen() {
 
       <TouchableOpacity 
         style={styles.processButton}
+        onPress={() => setCurrentStep('filling')}
+        disabled={isProcessing}
+      >
+        <Text style={styles.processButtonText}>
+          Continue to Fill Form Fields
+        </Text>
+      </TouchableOpacity>
+    </ScrollView>
+  );
+
+  const renderFillingStep = () => (
+    <ScrollView style={styles.scrollView}>
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Fill Form Fields</Text>
+        <Text style={styles.stepDescription}>
+          Please fill in the required fields and answer questions before processing your document.
+        </Text>
+      </View>
+
+      {formFields.length > 0 && (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Form Fields ({formFields.length})</Text>
+          {formFields.map((field) => (
+            <View key={field.id} style={styles.fieldInputContainer}>
+              <View style={styles.fieldHeader}>
+                <Ionicons 
+                  name={field.type === 'signature' ? 'create' : field.type === 'checkbox' ? 'checkbox' : 'text'} 
+                  size={20} 
+                  color="#007AFF" 
+                />
+                <Text style={styles.fieldLabel}>{field.label}</Text>
+                {field.required && <Text style={styles.requiredBadge}>Required</Text>}
+              </View>
+              
+              {field.type === 'checkbox' ? (
+                <View style={styles.checkboxContainer}>
+                  <Switch
+                    value={fieldValues[field.id] === 'true'}
+                    onValueChange={(value) => 
+                      setFieldValues(prev => ({ ...prev, [field.id]: value.toString() }))
+                    }
+                    trackColor={{ false: '#e1e5e9', true: '#007AFF' }}
+                    thumbColor={fieldValues[field.id] === 'true' ? '#ffffff' : '#f4f3f4'}
+                  />
+                  <Text style={styles.checkboxLabel}>
+                    {fieldValues[field.id] === 'true' ? 'Yes' : 'No'}
+                  </Text>
+                </View>
+              ) : field.type === 'signature' ? (
+                <SignatureDrawer
+                  value={fieldValues[field.id]}
+                  onSignatureChange={(signatureData: string) => 
+                    setFieldValues(prev => ({ ...prev, [field.id]: signatureData }))
+                  }
+                  label={field.label}
+                />
+              ) : (
+                <TextInput
+                  style={styles.textInput}
+                  placeholder={`Enter ${field.label.toLowerCase()}`}
+                  value={fieldValues[field.id] || ''}
+                  onChangeText={(text) => 
+                    setFieldValues(prev => ({ ...prev, [field.id]: text }))
+                  }
+                  multiline={field.type === 'text'}
+                  numberOfLines={field.type === 'text' ? 3 : 1}
+                />
+              )}
+              
+              {field.suggestions && field.suggestions.length > 0 && (
+                <Text style={styles.suggestionsText}>AI Suggestions: {field.suggestions.slice(0, 2).join(', ')}</Text>
+              )}
+            </View>
+          ))}
+        </View>
+      )}
+
+      {questions.length > 0 && (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Questions ({questions.length})</Text>
+          {questions.map((question) => (
+            <View key={question.id} style={styles.questionInputContainer}>
+              <View style={styles.questionHeader}>
+                <Ionicons name="help-circle" size={20} color="#FF9500" />
+                <Text style={styles.questionText}>{question.text}</Text>
+              </View>
+              
+              {question.type === 'yes_no' ? (
+                <View style={styles.radioContainer}>
+                  <TouchableOpacity 
+                    style={[styles.radioButton, questionAnswers[question.id] === 'yes' && styles.radioButtonSelected]}
+                    onPress={() => setQuestionAnswers(prev => ({ ...prev, [question.id]: 'yes' }))}
+                  >
+                    <Ionicons 
+                      name={questionAnswers[question.id] === 'yes' ? 'radio-button-on' : 'radio-button-off'} 
+                      size={20} 
+                      color="#007AFF" 
+                    />
+                    <Text style={styles.radioLabel}>Yes</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity 
+                    style={[styles.radioButton, questionAnswers[question.id] === 'no' && styles.radioButtonSelected]}
+                    onPress={() => setQuestionAnswers(prev => ({ ...prev, [question.id]: 'no' }))}
+                  >
+                    <Ionicons 
+                      name={questionAnswers[question.id] === 'no' ? 'radio-button-on' : 'radio-button-off'} 
+                      size={20} 
+                      color="#007AFF" 
+                    />
+                    <Text style={styles.radioLabel}>No</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : question.type === 'multiple_choice' && question.options ? (
+                <View style={styles.radioContainer}>
+                  {question.options.map((option, index) => (
+                    <TouchableOpacity 
+                      key={index}
+                      style={[styles.radioButton, questionAnswers[question.id] === option && styles.radioButtonSelected]}
+                      onPress={() => setQuestionAnswers(prev => ({ ...prev, [question.id]: option }))}
+                    >
+                      <Ionicons 
+                        name={questionAnswers[question.id] === option ? 'radio-button-on' : 'radio-button-off'} 
+                        size={20} 
+                        color="#007AFF" 
+                      />
+                      <Text style={styles.radioLabel}>{option}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ) : (
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="Enter your answer"
+                  value={questionAnswers[question.id] || ''}
+                  onChangeText={(text) => 
+                    setQuestionAnswers(prev => ({ ...prev, [question.id]: text }))
+                  }
+                  multiline
+                  numberOfLines={3}
+                />
+              )}
+              
+              {question.aiSuggestion && (
+                <Text style={styles.aiSuggestionText}>AI Suggestion: {question.aiSuggestion}</Text>
+              )}
+            </View>
+          ))}
+        </View>
+      )}
+
+            <TouchableOpacity 
+        style={styles.processButton}
         onPress={processDocument}
         disabled={isProcessing}
       >
@@ -311,6 +479,7 @@ export default function DocumentProcessorScreen() {
     <SafeAreaView style={styles.container}>
       {currentStep === 'analyzing' && renderAnalyzingStep()}
       {currentStep === 'reviewing' && renderReviewingStep()}
+      {currentStep === 'filling' && renderFillingStep()}
       {currentStep === 'signing' && renderSigningStep()}
       {currentStep === 'complete' && renderCompleteStep()}
     </SafeAreaView>
@@ -586,5 +755,60 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     textAlign: 'center',
     marginVertical: 20,
+  },
+  fieldInputContainer: {
+    backgroundColor: '#ffffff',
+    padding: 16,
+    borderRadius: 8,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#e1e5e9',
+  },
+  checkboxContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  checkboxLabel: {
+    fontSize: 16,
+    color: '#1a1a1a',
+    marginLeft: 12,
+  },
+
+  textInput: {
+    borderWidth: 1,
+    borderColor: '#e1e5e9',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
+    color: '#1a1a1a',
+    backgroundColor: '#ffffff',
+    marginTop: 8,
+  },
+  questionInputContainer: {
+    backgroundColor: '#ffffff',
+    padding: 16,
+    borderRadius: 8,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#e1e5e9',
+  },
+  radioContainer: {
+    marginTop: 8,
+  },
+  radioButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  radioButtonSelected: {
+    backgroundColor: '#f0f8ff',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+  },
+  radioLabel: {
+    fontSize: 16,
+    color: '#1a1a1a',
+    marginLeft: 8,
   },
 }); 
