@@ -1,0 +1,55 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="1024" height="1024" rx="200" fill="url(#gradient1)"/>
+  
+  <!-- Document -->
+  <rect x="200" y="150" width="624" height="724" rx="20" fill="white" stroke="#E1E5E9" stroke-width="8"/>
+  
+  <!-- Document lines -->
+  <rect x="240" y="200" width="544" height="4" rx="2" fill="#E1E5E9"/>
+  <rect x="240" y="220" width="400" height="4" rx="2" fill="#E1E5E9"/>
+  <rect x="240" y="240" width="480" height="4" rx="2" fill="#E1E5E9"/>
+  <rect x="240" y="260" width="360" height="4" rx="2" fill="#E1E5E9"/>
+  <rect x="240" y="280" width="520" height="4" rx="2" fill="#E1E5E9"/>
+  <rect x="240" y="300" width="440" height="4" rx="2" fill="#E1E5E9"/>
+  <rect x="240" y="320" width="380" height="4" rx="2" fill="#E1E5E9"/>
+  <rect x="240" y="340" width="500" height="4" rx="2" fill="#E1E5E9"/>
+  <rect x="240" y="360" width="420" height="4" rx="2" fill="#E1E5E9"/>
+  <rect x="240" y="380" width="460" height="4" rx="2" fill="#E1E5E9"/>
+  
+  <!-- AI Brain -->
+  <circle cx="750" cy="250" r="80" fill="url(#gradient2)"/>
+  <circle cx="720" cy="220" r="12" fill="white" opacity="0.8"/>
+  <circle cx="750" cy="200" r="10" fill="white" opacity="0.6"/>
+  <circle cx="780" cy="220" r="12" fill="white" opacity="0.8"/>
+  <circle cx="730" cy="280" r="10" fill="white" opacity="0.6"/>
+  <circle cx="770" cy="280" r="10" fill="white" opacity="0.6"/>
+  
+  <!-- Neural connections -->
+  <path d="M720 220L750 200L780 220" stroke="white" stroke-width="3" opacity="0.6"/>
+  <path d="M750 200L730 280L770 280" stroke="white" stroke-width="3" opacity="0.6"/>
+  <path d="M720 220L730 280" stroke="white" stroke-width="3" opacity="0.6"/>
+  <path d="M780 220L770 280" stroke="white" stroke-width="3" opacity="0.6"/>
+  
+  <!-- Signature line -->
+  <rect x="240" y="700" width="544" height="4" rx="2" fill="#007AFF"/>
+  
+  <!-- Signature -->
+  <path d="M260 680C280 660 300 670 320 680C340 690 360 685 380 680C400 675 420 680 440 670C460 660 480 665 500 680C520 695 540 690 560 680C580 670 600 675 620 680C640 685 660 680 680 670C700 660 720 665 740 680" stroke="#007AFF" stroke-width="6" fill="none" stroke-linecap="round"/>
+  
+  <!-- Checkmark -->
+  <circle cx="850" cy="200" r="50" fill="#34C759"/>
+  <path d="M825 200L840 215L875 180" stroke="white" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  
+  <!-- Gradients -->
+  <defs>
+    <linearGradient id="gradient1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#6366f1;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#007AFF;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="gradient2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#FF6B6B;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#FF8E53;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+</svg> 

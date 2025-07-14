@@ -1,13 +1,41 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
+import * as Linking from 'expo-linking';
 import { router } from 'expo-router';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import aiService from '../../services/aiService';
 
 export default function HomeScreen() {
   const [isProcessing, setIsProcessing] = useState(false);
-  const [recentDocuments, setRecentDocuments] = useState<any[]>([]);
+  const [isTestingAI, setIsTestingAI] = useState(false);
+  const [sharedFileInfo, setSharedFileInfo] = useState<any>(null);
+  const [recentDocuments] = useState([
+    { name: 'Employment Contract.docx', date: '2024-01-15' },
+    { name: 'Legal Waiver.pdf', date: '2024-01-10' },
+    { name: 'Application Form.docx', date: '2024-01-05' }
+  ]);
+
+  useEffect(() => {
+    // Check if app was opened with a shared file
+    const checkInitialFile = async () => {
+      try {
+        const initialUrl = await Linking.getInitialURL();
+        if (initialUrl && (initialUrl.startsWith('file://') || initialUrl.startsWith('content://'))) {
+          setSharedFileInfo({
+            uri: initialUrl,
+            name: initialUrl.split('/').pop() || 'Shared File',
+            type: 'shared'
+          });
+        }
+      } catch (error) {
+        console.error('Error checking initial file:', error);
+      }
+    };
+
+    checkInitialFile();
+  }, []);
 
   const pickDocument = async () => {
     try {
@@ -19,35 +47,30 @@ export default function HomeScreen() {
       });
 
       if (result.canceled) {
-        setIsProcessing(false);
+        console.log('Document picker canceled');
         return;
       }
 
       const file = result.assets[0];
       console.log('Selected file:', file);
 
-      // Check file type
-      const fileExtension = file.name?.toLowerCase().split('.').pop();
-      const isPdf = fileExtension === 'pdf';
-      const isDocx = fileExtension === 'docx';
-
-      if (!isPdf && !isDocx) {
-        Alert.alert('Unsupported Format', 'Please select a PDF or DOCX file');
-        setIsProcessing(false);
-        return;
+      // Determine file type
+      let fileType: 'pdf' | 'docx' = 'pdf';
+      if (file.name?.endsWith('.docx') || file.mimeType?.includes('wordprocessingml')) {
+        fileType = 'docx';
       }
 
-      // Navigate to document processing screen
+      // Navigate to document processor with file info
       router.push({
         pathname: '/document-processor',
-        params: { 
+        params: {
           uri: file.uri,
           name: file.name,
           size: file.size,
-          type: isPdf ? 'pdf' : 'docx'
+          type: fileType,
+          mimeType: file.mimeType
         }
       });
-
     } catch (error) {
       Alert.alert('Error', 'Failed to pick document');
       console.error('Document picker error:', error);
@@ -56,15 +79,46 @@ export default function HomeScreen() {
     }
   };
 
-  const openRecentDocument = (document: any) => {
-    router.push({
-      pathname: '/document-processor',
-      params: { 
-        uri: document.uri,
-        name: document.name,
-        size: document.size 
+  const processSharedFile = () => {
+    if (sharedFileInfo) {
+      router.push({
+        pathname: '/document-processor',
+        params: {
+          uri: sharedFileInfo.uri,
+          name: sharedFileInfo.name,
+          type: sharedFileInfo.name.endsWith('.docx') ? 'docx' : 'pdf'
+        }
+      });
+      setSharedFileInfo(null); // Clear the shared file info
+    }
+  };
+
+  const testAIConnection = async () => {
+    try {
+      setIsTestingAI(true);
+      console.log('Testing AI connection...');
+      
+      const result = await aiService.testAIConnection();
+      
+      if (result.success) {
+        Alert.alert(
+          'AI Test Successful', 
+          `AI is working!\n\nFields found: ${result.data?.formFields || 0}\nQuestions: ${result.data?.questions || 0}\nSignatures: ${result.data?.signatures || 0}`
+        );
+      } else {
+        Alert.alert('AI Test Failed', result.message);
       }
-    });
+    } catch (error) {
+      Alert.alert('Error', 'Failed to test AI connection');
+      console.error('AI test error:', error);
+    } finally {
+      setIsTestingAI(false);
+    }
+  };
+
+  const openRecentDocument = (document: any) => {
+    Alert.alert('Recent Document', `Opening ${document.name}`);
+    // In a real app, you would open the actual document
   };
 
   return (
@@ -72,9 +126,26 @@ export default function HomeScreen() {
       <ScrollView style={styles.scrollView}>
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.title}>AI Document Signer</Text>
-          <Text style={styles.subtitle}>Upload PDFs and DOCX files for AI-powered signing</Text>
+          <Text style={styles.title}>AI Doc Sign</Text>
+          <Text style={styles.subtitle}>Upload and sign documents with AI assistance</Text>
         </View>
+
+        {/* Shared File Notification */}
+        {sharedFileInfo && (
+          <View style={styles.sharedFileNotification}>
+            <Ionicons name="document" size={24} color="#007AFF" />
+            <View style={styles.sharedFileInfo}>
+              <Text style={styles.sharedFileName}>{sharedFileInfo.name}</Text>
+              <Text style={styles.sharedFileText}>File shared to app</Text>
+            </View>
+            <TouchableOpacity 
+              style={styles.processSharedButton}
+              onPress={processSharedFile}
+            >
+              <Text style={styles.processSharedButtonText}>Process</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Upload Section */}
         <View style={styles.uploadSection}>
@@ -83,16 +154,24 @@ export default function HomeScreen() {
             onPress={pickDocument}
             disabled={isProcessing}
           >
-            <Ionicons 
-              name={isProcessing ? "cloud-upload" : "cloud-upload-outline"} 
-              size={48} 
-              color={isProcessing ? "#666" : "#007AFF"} 
-            />
+            <Ionicons name="cloud-upload" size={48} color={isProcessing ? '#666' : '#007AFF'} />
             <Text style={[styles.uploadText, isProcessing && styles.uploadTextDisabled]}>
               {isProcessing ? 'Processing...' : 'Upload Document'}
             </Text>
             <Text style={styles.uploadSubtext}>
               Select a PDF or DOCX file to analyze and sign
+            </Text>
+          </TouchableOpacity>
+
+          {/* AI Test Button */}
+          <TouchableOpacity 
+            style={[styles.testButton, isTestingAI && styles.testButtonDisabled]}
+            onPress={testAIConnection}
+            disabled={isTestingAI}
+          >
+            <Ionicons name="bug" size={24} color={isTestingAI ? '#666' : '#FF9500'} />
+            <Text style={[styles.testButtonText, isTestingAI && styles.testButtonTextDisabled]}>
+              {isTestingAI ? 'Testing...' : 'Test AI Connection'}
             </Text>
           </TouchableOpacity>
         </View>
@@ -184,6 +263,41 @@ const styles = StyleSheet.create({
     color: '#666',
     textAlign: 'center',
   },
+  sharedFileNotification: {
+    backgroundColor: '#E3F2FD',
+    borderRadius: 12,
+    padding: 16,
+    margin: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#007AFF',
+  },
+  sharedFileInfo: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  sharedFileName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1a1a1a',
+  },
+  sharedFileText: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 2,
+  },
+  processSharedButton: {
+    backgroundColor: '#007AFF',
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  processSharedButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#fff',
+  },
   uploadSection: {
     padding: 20,
   },
@@ -195,6 +309,7 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#e1e5e9',
     borderStyle: 'dashed',
+    marginBottom: 16,
   },
   uploadButtonDisabled: {
     borderColor: '#ccc',
@@ -214,6 +329,29 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
     textAlign: 'center',
+  },
+  testButton: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#FF9500',
+  },
+  testButtonDisabled: {
+    borderColor: '#ccc',
+    backgroundColor: '#f8f9fa',
+  },
+  testButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FF9500',
+    marginLeft: 8,
+  },
+  testButtonTextDisabled: {
+    color: '#666',
   },
   featuresSection: {
     padding: 20,

@@ -1,11 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
+import * as SecureStore from 'expo-secure-store';
 import * as Sharing from 'expo-sharing';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import SignatureDrawer from '../components/SignatureDrawer';
-import aiService, { AIProcessingResult, DocumentAnalysis, FormField, Question } from '../services/aiService';
+import { AIProcessingResult, aiService, DocumentAnalysis, FormField, Question, SignatureData } from '../services/aiService';
 
 export default function DocumentProcessorScreen() {
   const params = useLocalSearchParams();
@@ -22,6 +23,9 @@ export default function DocumentProcessorScreen() {
   const [insights, setInsights] = useState<{ insights: string[]; recommendations: string[]; riskLevel: 'low' | 'medium' | 'high' } | null>(null);
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
   const [questionAnswers, setQuestionAnswers] = useState<Record<string, string>>({});
+  const [userSignatures, setUserSignatures] = useState<SignatureData[]>([]);
+  const [showSignatureDrawer, setShowSignatureDrawer] = useState(false);
+  const [currentSignatureField, setCurrentSignatureField] = useState<string>('');
 
   useEffect(() => {
     if (params.uri) {
@@ -78,9 +82,12 @@ export default function DocumentProcessorScreen() {
         category: aiAnalysis.documentInfo.category
       });
 
-      // Get AI insights
-      const documentInsights = await aiService.getDocumentInsights(aiAnalysis);
-      setInsights(documentInsights);
+      // Get AI insights from the analysis
+      setInsights({
+        insights: aiAnalysis.keyInsights || [],
+        recommendations: aiAnalysis.riskAssessment?.recommendations || [],
+        riskLevel: aiAnalysis.riskAssessment?.level || 'low'
+      });
       
       setCurrentStep('reviewing');
     } catch (error) {
@@ -92,10 +99,34 @@ export default function DocumentProcessorScreen() {
     }
   };
 
+  const loadUserSignatures = async () => {
+    try {
+      const storedSignatures = await SecureStore.getItemAsync('user_signatures');
+      if (storedSignatures) {
+        const signatures = JSON.parse(storedSignatures);
+        setUserSignatures(signatures);
+      }
+    } catch (error) {
+      console.error('Error loading signatures:', error);
+    }
+  };
+
   const processDocument = async () => {
     try {
       setIsProcessing(true);
       setCurrentStep('signing');
+      
+      // Load user signatures directly
+      let signatures: SignatureData[] = [];
+      try {
+        const storedSignatures = await SecureStore.getItemAsync('user_signatures');
+        if (storedSignatures) {
+          signatures = JSON.parse(storedSignatures);
+          console.log('Loaded signatures:', signatures.length);
+        }
+      } catch (error) {
+        console.error('Error loading signatures:', error);
+      }
       
       // Prepare user data from filled fields and answers
       const userData: Record<string, any> = {};
@@ -103,7 +134,7 @@ export default function DocumentProcessorScreen() {
       // Add field values
       Object.keys(fieldValues).forEach(fieldId => {
         const field = formFields.find(f => f.id === fieldId);
-        if (field) {
+        if (field && field.label) {
           userData[field.label.toLowerCase().replace(/\s+/g, '_')] = fieldValues[fieldId];
         }
       });
@@ -115,6 +146,17 @@ export default function DocumentProcessorScreen() {
           userData[`question_${questionId}`] = questionAnswers[questionId];
         }
       });
+      
+      // Add signatures to user data
+      if (signatures.length > 0) {
+        userData.signatures = signatures;
+        console.log('Added signatures to user data:', signatures.length);
+        signatures.forEach(sig => {
+          console.log(`- ${sig.name} (${sig.type}): ${sig.data.substring(0, 50)}...`);
+        });
+      } else {
+        console.log('No signatures found, will use default');
+      }
       
       console.log('Processing document with user data:', userData);
       
@@ -137,7 +179,21 @@ export default function DocumentProcessorScreen() {
 
   const downloadDocument = async () => {
     try {
-      const documentUri = processingResult?.signedDocumentUri || params.uri as string;
+      // Ensure we have a valid string URI
+      let documentUri = params.uri as string;
+      
+      if (processingResult?.signedDocumentUri) {
+        // Check if signedDocumentUri is a string or an object with a uri property
+        if (typeof processingResult.signedDocumentUri === 'string') {
+          documentUri = processingResult.signedDocumentUri;
+        } else if (processingResult.signedDocumentUri && typeof processingResult.signedDocumentUri === 'object' && 'uri' in processingResult.signedDocumentUri) {
+          documentUri = (processingResult.signedDocumentUri as any).uri;
+        } else {
+          console.warn('Invalid signedDocumentUri format:', processingResult.signedDocumentUri);
+        }
+      }
+      
+      console.log('Sharing document URI:', documentUri);
       
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(documentUri, {
@@ -159,10 +215,10 @@ export default function DocumentProcessorScreen() {
         Our AI is intelligently scanning your {documentType.toUpperCase()} document for form fields, signatures, and questions...
       </Text>
       <View style={styles.progressSteps}>
-        <Text style={styles.progressStep}>✓ Document uploaded</Text>
-        <Text style={styles.progressStep}>🔄 AI field detection</Text>
-        <Text style={styles.progressStep}>⏳ Question analysis</Text>
-        <Text style={styles.progressStep}>⏳ Signature identification</Text>
+        <Text key="step1" style={styles.progressStep}>✓ Document uploaded</Text>
+        <Text key="step2" style={styles.progressStep}>🔄 AI field detection</Text>
+        <Text key="step3" style={styles.progressStep}>⏳ Question analysis</Text>
+        <Text key="step4" style={styles.progressStep}>⏳ Signature identification</Text>
       </View>
     </View>
   );
@@ -175,13 +231,13 @@ export default function DocumentProcessorScreen() {
           {documentInfo?.name} • {Math.round((documentInfo?.size || 0) / 1024)}KB • {documentInfo?.type} • {documentInfo?.pages} page(s)
         </Text>
         {documentInfo?.language && (
-          <Text style={styles.documentInfo}>Language: {documentInfo.language.toUpperCase()}</Text>
+          <Text key="language" style={styles.documentInfo}>Language: {documentInfo.language.toUpperCase()}</Text>
         )}
         {documentInfo?.category && (
-          <Text style={styles.documentInfo}>Category: {documentInfo.category.replace('_', ' ').toUpperCase()}</Text>
+          <Text key="category" style={styles.documentInfo}>Category: {documentInfo.category.replace('_', ' ').toUpperCase()}</Text>
         )}
         {documentType === 'docx' && documentContent && (
-          <Text style={styles.contentPreview}>
+          <Text key="content-preview" style={styles.contentPreview}>
             Content Preview: {documentContent.substring(0, 100)}...
           </Text>
         )}
@@ -194,13 +250,13 @@ export default function DocumentProcessorScreen() {
             <Text style={styles.riskText}>Risk Level: {insights.riskLevel.toUpperCase()}</Text>
           </View>
           {insights.insights.map((insight, index) => (
-            <Text key={index} style={styles.insightText}>• {insight}</Text>
+            <Text key={`insight-${index}`} style={styles.insightText}>• {insight}</Text>
           ))}
           {insights.recommendations.length > 0 && (
-            <Text style={styles.recommendationsTitle}>Recommendations:</Text>
+            <Text key="recommendations-title" style={styles.recommendationsTitle}>Recommendations:</Text>
           )}
           {insights.recommendations.map((rec, index) => (
-            <Text key={index} style={styles.recommendationText}>• {rec}</Text>
+            <Text key={`recommendation-${index}`} style={styles.recommendationText}>• {rec}</Text>
           ))}
         </View>
       )}
@@ -214,15 +270,15 @@ export default function DocumentProcessorScreen() {
             <View key={field.id} style={styles.fieldItem}>
               <View style={styles.fieldHeader}>
                 <Ionicons 
-                  name={field.type === 'signature' ? 'create' : field.type === 'checkbox' ? 'checkbox' : 'text'} 
+                  name={(field.type || 'text') === 'signature' ? 'create' : (field.type || 'text') === 'checkbox' ? 'checkbox' : 'text'} 
                   size={20} 
                   color="#007AFF" 
                 />
-                <Text style={styles.fieldLabel}>{field.label}</Text>
+                <Text style={styles.fieldLabel}>{field.label || 'Unnamed Field'}</Text>
                 {field.required && <Text style={styles.requiredBadge}>Required</Text>}
                 <Text style={styles.confidenceBadge}>{Math.round(field.confidence * 100)}%</Text>
               </View>
-              <Text style={styles.fieldType}>{field.type.toUpperCase()}</Text>
+              <Text style={styles.fieldType}>{(field.type || 'text').toUpperCase()}</Text>
               {field.suggestions && field.suggestions.length > 0 && (
                 <Text style={styles.suggestionsText}>AI Suggestions: {field.suggestions.slice(0, 2).join(', ')}</Text>
               )}
@@ -276,15 +332,15 @@ export default function DocumentProcessorScreen() {
             <View key={field.id} style={styles.fieldInputContainer}>
               <View style={styles.fieldHeader}>
                 <Ionicons 
-                  name={field.type === 'signature' ? 'create' : field.type === 'checkbox' ? 'checkbox' : 'text'} 
+                  name={(field.type || 'text') === 'signature' ? 'create' : (field.type || 'text') === 'checkbox' ? 'checkbox' : 'text'} 
                   size={20} 
                   color="#007AFF" 
                 />
-                <Text style={styles.fieldLabel}>{field.label}</Text>
+                <Text style={styles.fieldLabel}>{field.label || 'Unnamed Field'}</Text>
                 {field.required && <Text style={styles.requiredBadge}>Required</Text>}
               </View>
               
-              {field.type === 'checkbox' ? (
+              {(field.type || 'text') === 'checkbox' ? (
                 <View style={styles.checkboxContainer}>
                   <Switch
                     value={fieldValues[field.id] === 'true'}
@@ -298,24 +354,24 @@ export default function DocumentProcessorScreen() {
                     {fieldValues[field.id] === 'true' ? 'Yes' : 'No'}
                   </Text>
                 </View>
-              ) : field.type === 'signature' ? (
+              ) : (field.type || 'text') === 'signature' ? (
                 <SignatureDrawer
                   value={fieldValues[field.id]}
                   onSignatureChange={(signatureData: string) => 
                     setFieldValues(prev => ({ ...prev, [field.id]: signatureData }))
                   }
-                  label={field.label}
+                  label={field.label || 'Signature'}
                 />
               ) : (
                 <TextInput
                   style={styles.textInput}
-                  placeholder={`Enter ${field.label.toLowerCase()}`}
+                  placeholder={`Enter ${field.label?.toLowerCase() || 'field'}`}
                   value={fieldValues[field.id] || ''}
                   onChangeText={(text) => 
                     setFieldValues(prev => ({ ...prev, [field.id]: text }))
                   }
-                  multiline={field.type === 'text'}
-                  numberOfLines={field.type === 'text' ? 3 : 1}
+                  multiline={(field.type || 'text') === 'text'}
+                  numberOfLines={(field.type || 'text') === 'text' ? 3 : 1}
                 />
               )}
               
@@ -366,7 +422,7 @@ export default function DocumentProcessorScreen() {
                 <View style={styles.radioContainer}>
                   {question.options.map((option, index) => (
                     <TouchableOpacity 
-                      key={index}
+                      key={`${question.id}-option-${index}`}
                       style={[styles.radioButton, questionAnswers[question.id] === option && styles.radioButtonSelected]}
                       onPress={() => setQuestionAnswers(prev => ({ ...prev, [question.id]: option }))}
                     >
@@ -420,11 +476,11 @@ export default function DocumentProcessorScreen() {
         Our AI is intelligently filling forms, answering questions, and applying signatures...
       </Text>
       <View style={styles.progressSteps}>
-        <Text style={styles.progressStep}>✓ Document analyzed</Text>
-        <Text style={styles.progressStep}>🔄 AI form filling</Text>
-        <Text style={styles.progressStep}>🔄 Question answering</Text>
-        <Text style={styles.progressStep}>⏳ Signature application</Text>
-        <Text style={styles.progressStep}>⏳ Document validation</Text>
+        <Text key="step1" style={styles.progressStep}>✓ Document analyzed</Text>
+        <Text key="step2" style={styles.progressStep}>🔄 AI form filling</Text>
+        <Text key="step3" style={styles.progressStep}>🔄 Question answering</Text>
+        <Text key="step4" style={styles.progressStep}>⏳ Signature application</Text>
+        <Text key="step5" style={styles.progressStep}>⏳ Document validation</Text>
       </View>
     </View>
   );
@@ -436,20 +492,26 @@ export default function DocumentProcessorScreen() {
       </View>
       <Text style={styles.stepTitle}>AI Processing Complete!</Text>
       <Text style={styles.stepDescription}>
-        Your {documentType.toUpperCase()} document has been intelligently processed with AI assistance.
+        Your {documentType.toUpperCase()} document has been intelligently processed with AI assistance. 
+        {processingResult?.signedDocumentUri && processingResult.signedDocumentUri !== params.uri && 
+          ` A filled ${documentType.toUpperCase()} document has been created with all your data.`
+        }
       </Text>
       
       {processingResult && (
         <View style={styles.resultsContainer}>
           <Text style={styles.resultsTitle}>Processing Results:</Text>
-          <Text style={styles.resultText}>• {processingResult.filledFields.length} fields filled</Text>
-          <Text style={styles.resultText}>• {processingResult.answeredQuestions.length} questions answered</Text>
-          <Text style={styles.resultText}>• Processing time: {processingResult.processingTime.toFixed(1)}s</Text>
+          <Text key="fields-filled" style={styles.resultText}>• {processingResult.filledFields.length} fields filled</Text>
+          <Text key="questions-answered" style={styles.resultText}>• {processingResult.answeredQuestions.length} questions answered</Text>
+          <Text key="processing-time" style={styles.resultText}>• Processing time: {processingResult.processingTime.toFixed(1)}s</Text>
+          {processingResult.signedDocumentUri && processingResult.signedDocumentUri !== params.uri && (
+            <Text key="document-created" style={styles.successText}>• {documentType.toUpperCase()} document created with filled data</Text>
+          )}
           {processingResult.errors && processingResult.errors.length > 0 && (
-            <Text style={styles.errorText}>• {processingResult.errors.length} validation errors</Text>
+            <Text key="validation-errors" style={styles.errorText}>• {processingResult.errors.length} validation errors</Text>
           )}
           {processingResult.warnings && processingResult.warnings.length > 0 && (
-            <Text style={styles.warningText}>• {processingResult.warnings.length} warnings</Text>
+            <Text key="warnings" style={styles.warningText}>• {processingResult.warnings.length} warnings</Text>
           )}
         </View>
       )}
@@ -457,14 +519,19 @@ export default function DocumentProcessorScreen() {
       <View style={styles.actionButtons}>
         <TouchableOpacity style={styles.actionButton} onPress={downloadDocument}>
           <Ionicons name="download" size={20} color="#007AFF" />
-          <Text style={styles.actionButtonText}>Download</Text>
+          <Text style={styles.actionButtonText}>Download Document</Text>
         </TouchableOpacity>
         
         <TouchableOpacity style={styles.actionButton} onPress={downloadDocument}>
           <Ionicons name="share" size={20} color="#007AFF" />
-          <Text style={styles.actionButtonText}>Share</Text>
+          <Text style={styles.actionButtonText}>Share Document</Text>
         </TouchableOpacity>
       </View>
+      
+      <Text style={styles.noteText}>
+        📝 Note: The downloaded file is your filled document with all the data you provided. 
+        For PDFs, this is a properly filled PDF file that you can use directly.
+      </Text>
 
       <TouchableOpacity 
         style={styles.homeButton}
@@ -713,6 +780,11 @@ const styles = StyleSheet.create({
     color: '#FF9500',
     marginBottom: 4,
   },
+  successText: {
+    fontSize: 14,
+    color: '#34C759',
+    marginBottom: 4,
+  },
   actionButtons: {
     flexDirection: 'row',
     marginTop: 30,
@@ -810,5 +882,14 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#1a1a1a',
     marginLeft: 8,
+  },
+  noteText: {
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
+    lineHeight: 20,
+    marginTop: 20,
+    paddingHorizontal: 20,
+    fontStyle: 'italic',
   },
 }); 

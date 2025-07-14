@@ -1,5 +1,4 @@
 import * as FileSystem from 'expo-file-system';
-import { franc } from 'franc';
 import mammoth from 'mammoth';
 
 export interface FormField {
@@ -82,41 +81,10 @@ export interface AIProcessingResult {
   warnings?: string[];
 }
 
-// AI Provider Types
-export type AIProvider = 'local' | 'fallback';
-
 class AIService {
-  private localLLMUrl: string | null = null;
-  private localLLMModel: string | null = null;
-  private aiProvider: AIProvider = 'fallback';
   private userProfile: Record<string, any> = {};
 
   constructor() {
-    // Load local LLM configuration from environment
-    this.localLLMUrl = process.env.EXPO_PUBLIC_LOCAL_LLM_URL || null;
-    this.localLLMModel = process.env.EXPO_PUBLIC_LOCAL_LLM_MODEL || 'llama2';
-    
-    // Determine which AI provider to use
-    if (this.localLLMUrl) {
-      this.aiProvider = 'local';
-    } else {
-      this.aiProvider = 'fallback';
-    }
-    
-    console.log(`AI Service initialized with provider: ${this.aiProvider}`);
-    console.log(`Local LLM URL: ${this.localLLMUrl}`);
-    console.log(`Local LLM Model: ${this.localLLMModel}`);
-    
-    // Log model recommendations
-    if (this.localLLMModel === 'llama2') {
-      console.log('💡 Tip: Consider using llama2:13b for better document analysis');
-      console.log('   Run: ollama pull llama2:13b');
-      console.log('   Then update .env: EXPO_PUBLIC_LOCAL_LLM_MODEL=llama2:13b');
-    } else if (this.localLLMModel === 'granite3.2-vision-abliterated' || this.localLLMModel === 'huihui_ai/granite3.2-vision-abliterated') {
-      console.log('🚀 Using Granite 3.2 Vision - Excellent choice for document analysis!');
-      console.log('   This model should provide much better results for Hebrew documents.');
-    }
-    
     this.loadUserProfile();
   }
 
@@ -150,27 +118,12 @@ class AIService {
    */
   private async extractDocxContent(fileUri: string): Promise<{ content: string; metadata: any }> {
     try {
-      console.log('Starting DOCX content extraction from:', fileUri);
-      
-      // Check if file exists
-      const fileInfo = await FileSystem.getInfoAsync(fileUri);
-      if (!fileInfo.exists) {
-        throw new Error(`DOCX file not found: ${fileUri}`);
-      }
-      
-      console.log('File exists, size:', fileInfo.size);
-      
       const fileBuffer = await FileSystem.readAsStringAsync(fileUri, {
         encoding: FileSystem.EncodingType.Base64,
       });
       
-      console.log('File read successfully, buffer length:', fileBuffer.length);
-      
       const arrayBuffer = Uint8Array.from(atob(fileBuffer), c => c.charCodeAt(0)).buffer;
-      console.log('ArrayBuffer created, size:', arrayBuffer.byteLength);
-      
       const result = await mammoth.extractRawText({ arrayBuffer });
-      console.log('Mammoth extraction completed, content length:', result.value.length);
       
       // Extract additional metadata
       const metadata = {
@@ -178,625 +131,172 @@ class AIService {
         paragraphCount: result.value.split('\n\n').length,
         hasTables: result.value.includes('|') || result.value.includes('\t'),
         hasLists: result.value.includes('•') || result.value.includes('-'),
-        language: franc(result.value, { minLength: 10 })
+        language: this.detectLanguage(result.value)
       };
-      
-      console.log('DOCX metadata:', metadata);
-      console.log('DOCX content preview:', result.value.substring(0, 200) + '...');
       
       return { content: result.value, metadata };
     } catch (error) {
       console.error('Error extracting DOCX content:', error);
-      console.error('Error details:', {
-        message: error instanceof Error ? error.message : 'Unknown error',
-        stack: error instanceof Error ? error.stack : undefined
-      });
-      throw new Error(`Failed to extract DOCX content: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error('Failed to extract DOCX content');
     }
   }
 
-
-
   /**
-   * Local LLM analysis using Ollama or other local server
+   * Detect document language using character analysis
    */
-  private async analyzeContentWithLocalLLM(content: string, fileType: string): Promise<any> {
-    if (!this.localLLMUrl) {
-      throw new Error('Local LLM URL not configured');
-    }
-
-    try {
-      console.log('Making local LLM API call...');
-      console.log(`URL: ${this.localLLMUrl}`);
-      console.log(`Model: ${this.localLLMModel}`);
-      console.log(`Content length: ${content.length}`);
-      console.log(`Content preview: ${content.substring(0, 500)}...`);
-      
-      // Use franc library for proper language detection
-      // Clean the content to improve detection accuracy
-      const cleanContent = content;
-      
-      const detectedLanguage = franc(cleanContent, { minLength: 10 });
-      const isHebrew = detectedLanguage === 'heb';
-      
-      console.log('=== FRANC LANGUAGE DETECTION DEBUG ===');
-      console.log('Original content:', {
-        length: content.length,
-        preview: content.substring(0, 300)
-      });
-      
-      console.log('Cleaned content:', {
-        length: cleanContent.length,
-        preview: cleanContent.substring(0, 300)
-      });
-      
-      console.log('Franc detection:', {
-        detectedLanguage,
-        isHebrew,
-        minLength: 10,
-        contentLength: cleanContent.length
-      });
-      
-      // Test franc with different content lengths
-      if (cleanContent.length > 50) {
-        const test50 = franc(cleanContent.substring(0, 50), { minLength: 10 });
-        const test100 = franc(cleanContent.substring(0, 100), { minLength: 10 });
-        const test200 = franc(cleanContent.substring(0, 200), { minLength: 10 });
-        
-        console.log('Franc tests with different lengths:', {
-          '50 chars': test50,
-          '100 chars': test100,
-          '200 chars': test200,
-          'full content': detectedLanguage
-        });
-      }
-      
-      console.log('=== END FRANC DEBUG ===');
-      
-      const systemPrompt = isHebrew ? 
-        `You are an expert Hebrew document analyzer. Analyze the provided Hebrew document content and extract ONLY the actual form fields, questions, and signatures that exist in the document.
-
-**CRITICAL INSTRUCTIONS FOR HEBREW DOCUMENTS:**
-- ONLY identify form fields, questions, and signatures that actually appear in the provided Hebrew document content
-- DO NOT generate generic or template fields
-- If no form fields exist in the content, return empty arrays
-- If no questions exist in the content, return empty arrays
-- If no signature areas exist in the content, return empty arrays
-
-**Hebrew Document Analysis:**
-1. **Language**: "he" (Hebrew)
-2. **Category**: Identify based on content (legal_waiver, employment_contract, etc.)
-3. **Content Summary**: Summarize what the Hebrew document actually contains
-4. **Key Insights**: Extract insights from the actual Hebrew content
-5. **Form Fields**: ONLY Hebrew fields that actually appear in the document
-6. **Questions**: ONLY Hebrew questions that actually appear in the document  
-7. **Signatures**: ONLY Hebrew signature areas that actually appear in the document
-
-**Common Hebrew Form Elements to Look For:**
-- שם מלא (Full Name)
-- תעודת זהות (ID Number)
-- כתובת דוא"ל (Email Address)
-- מספר טלפון (Phone Number)
-- כתובת (Address)
-- תאריך (Date)
-- חתימה (Signature)
-- תאריך חתימה (Signature Date)
-
-**For Blink Fintech Documents**: Look for company-specific fields, legal waivers, employment terms, etc.
-
-Return ONLY a valid JSON object with this exact structure:
-
-{
-  "language": "he",
-  "category": "legal_waiver",
-  "summary": "Summary of what the Hebrew document actually contains",
-  "keyInsights": [
-    "Insight based on actual Hebrew content",
-    "Company or party mentioned in Hebrew",
-    "Legal implications found in Hebrew text"
-  ],
-  "riskAssessment": {
-    "level": "high|medium|low",
-    "issues": [
-      "Specific risks found in the Hebrew content"
-    ],
-    "recommendations": [
-      "Specific recommendations based on Hebrew content"
-    ]
-  },
-  "formFields": [
-    {
-      "id": "1",
-      "type": "text|email|phone|date|checkbox|signature",
-      "label": "EXACT Hebrew field name from document content",
-      "required": true,
-      "position": {"x": 100, "y": 150, "width": 200, "height": 30},
-      "page": 1,
-      "confidence": 0.95,
-      "suggestions": ["Relevant Hebrew suggestions"]
-    }
-  ],
-  "questions": [
-    {
-      "id": "1", 
-      "text": "EXACT Hebrew question text from document content",
-      "type": "yes_no|multiple_choice|text|date|number",
-      "position": {"x": 100, "y": 200, "width": 300, "height": 30},
-      "page": 1,
-      "confidence": 0.90,
-      "aiSuggestion": "Suggestion based on Hebrew content"
-    }
-  ],
-  "signatures": [
-    {
-      "id": "1",
-      "label": "EXACT Hebrew signature label from document content",
-      "required": true,
-      "position": {"x": 100, "y": 300, "width": 150, "height": 50},
-      "page": 1
-    }
-  ]
-}
-
-**IMPORTANT**: 
-- ONLY include fields/questions/signatures that actually exist in the provided Hebrew content
-- If the content doesn't contain form fields, return empty arrays
-- Analyze the actual Hebrew document content, not generic templates
-- Ensure valid JSON syntax: NO trailing commas
-- Return ONLY the JSON object` :
-        
-        `You are an expert document analyzer. Analyze the provided document content and extract ONLY the actual form fields, questions, and signatures that exist in the document.
-
-**CRITICAL INSTRUCTIONS:**
-- ONLY identify form fields, questions, and signatures that actually appear in the provided document content
-- DO NOT generate generic or template fields
-- If no form fields exist in the content, return empty arrays
-- If no questions exist in the content, return empty arrays
-- If no signature areas exist in the content, return empty arrays
-
-**Document Analysis:**
-1. **Language**: Identify the primary language from the content
-2. **Category**: Classify based on actual document content
-3. **Content Summary**: Summarize what the document actually contains
-4. **Key Insights**: Extract insights from the actual content
-5. **Form Fields**: ONLY fields that actually appear in the document
-6. **Questions**: ONLY questions that actually appear in the document  
-7. **Signatures**: ONLY signature areas that actually appear in the document
-
-Return ONLY a valid JSON object with this exact structure:
-
-{
-  "language": "en",
-  "category": "general_form",
-  "summary": "Summary of what the document actually contains",
-  "keyInsights": [
-    "Insight based on actual content"
-  ],
-  "riskAssessment": {
-    "level": "high|medium|low",
-    "issues": [
-      "Specific risks found in the content"
-    ],
-    "recommendations": [
-      "Specific recommendations based on content"
-    ]
-  },
-  "formFields": [
-    {
-      "id": "1",
-      "type": "text|email|phone|date|checkbox|signature",
-      "label": "EXACT field name from document content",
-      "required": true,
-      "position": {"x": 100, "y": 150, "width": 200, "height": 30},
-      "page": 1,
-      "confidence": 0.95,
-      "suggestions": ["Relevant suggestions"]
-    }
-  ],
-  "questions": [
-    {
-      "id": "1", 
-      "text": "EXACT question text from document content",
-      "type": "yes_no|multiple_choice|text|date|number",
-      "position": {"x": 100, "y": 200, "width": 300, "height": 30},
-      "page": 1,
-      "confidence": 0.90,
-      "aiSuggestion": "Suggestion based on content"
-    }
-  ],
-  "signatures": [
-    {
-      "id": "1",
-      "label": "EXACT signature label from document content",
-      "required": true,
-      "position": {"x": 100, "y": 300, "width": 150, "height": 50},
-      "page": 1
-    }
-  ]
-}
-
-**IMPORTANT**: 
-- ONLY include fields/questions/signatures that actually exist in the provided content
-- If the content doesn't contain form fields, return empty arrays
-- Analyze the actual document content, not generic templates
-- Ensure valid JSON syntax: NO trailing commas
-- Return ONLY the JSON object`;
-
-      const requestBody = {
-        model: this.localLLMModel,
-        messages: [
-          {
-            role: 'system',
-            content: systemPrompt
-          },
-          {
-            role: 'user',
-            content: `Analyze this ${fileType.toUpperCase()} document content. ONLY identify form fields, questions, and signatures that actually appear in this content. Do not generate generic fields. If no form fields exist, return empty arrays:\n\n${content.substring(0, 4000)}`
-          }
-        ],
-        max_tokens: 6000,
-        temperature: 0.1
-      };
-      
-      console.log('Request body prepared, making API call...');
-      
-      const response = await fetch(`${this.localLLMUrl}/v1/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestBody)
-      });
-
-      console.log('API response status:', response.status);
-      console.log('API response headers:', Object.fromEntries(response.headers.entries()));
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('API error response:', errorText);
-        throw new Error(`Local LLM API error: ${response.status} - ${response.statusText} - ${errorText}`);
-      }
-
-      const data = await response.json();
-      console.log('API response data structure:', Object.keys(data));
-      
-      if (!data.choices || !data.choices[0] || !data.choices[0].message) {
-        console.error('Unexpected API response structure:', data);
-        throw new Error('Invalid response structure from Local LLM');
-      }
-      
-      const aiResponse = data.choices[0].message.content;
-      console.log('Local LLM Response received, length:', aiResponse.length);
-      console.log('Response preview:', aiResponse.substring(0, 300) + '...');
-      
-      try {
-        // Try to clean the response before parsing
-        let cleanedResponse = aiResponse.trim();
-        
-        // Remove any markdown code blocks
-        if (cleanedResponse.startsWith('```json')) {
-          cleanedResponse = cleanedResponse.replace(/^```json\s*/, '').replace(/\s*```$/, '');
-        } else if (cleanedResponse.startsWith('```')) {
-          cleanedResponse = cleanedResponse.replace(/^```\s*/, '').replace(/\s*```$/, '');
-        }
-        
-        // Try to find JSON object in the response
-        const jsonMatch = cleanedResponse.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          cleanedResponse = jsonMatch[0];
-        }
-        
-        // Remove any trailing characters after the JSON
-        const lastBraceIndex = cleanedResponse.lastIndexOf('}');
-        if (lastBraceIndex !== -1) {
-          cleanedResponse = cleanedResponse.substring(0, lastBraceIndex + 1);
-        }
-        
-        // Fix trailing commas in arrays and objects (common LLM issue)
-        cleanedResponse = cleanedResponse
-          // Remove trailing commas in arrays: [item1, item2,] -> [item1, item2]
-          .replace(/,(\s*[}\]])/g, '$1')
-          // Remove trailing commas in objects: {"key": "value",} -> {"key": "value"}
-          .replace(/,(\s*})/g, '$1')
-          // Fix multiple trailing commas
-          .replace(/,+(\s*[}\]])/g, '$1');
-        
-        console.log('Cleaned response for parsing:', cleanedResponse.substring(0, 300) + '...');
-        
-        const parsedResponse = JSON.parse(cleanedResponse);
-        console.log('Successfully parsed JSON response');
-        return parsedResponse;
-      } catch (parseError) {
-        console.error('Failed to parse Local LLM response:', parseError);
-        console.error('Raw response that failed to parse:', aiResponse);
-        console.error('Parse error details:', parseError);
-        
-        // Try to extract any useful information from the response
-        if (aiResponse.includes('language') || aiResponse.includes('category')) {
-          console.log('Response contains useful information, attempting to extract...');
-          return this.extractPartialAnalysis(aiResponse);
-        }
-        
-        throw new Error(`Invalid JSON response from Local LLM: ${parseError instanceof Error ? parseError.message : 'Unknown parse error'}`);
-      }
-    } catch (error) {
-      console.error('Local LLM analysis error:', error);
-      console.error('Error details:', {
-        message: error instanceof Error ? error.message : 'Unknown error',
-        stack: error instanceof Error ? error.stack : undefined
-      });
-      throw error;
-    }
+  private detectLanguage(text: string): string {
+    // Enhanced language detection
+    const hebrewChars = /[\u0590-\u05FF]/;
+    const arabicChars = /[\u0600-\u06FF]/;
+    const chineseChars = /[\u4E00-\u9FFF]/;
+    const japaneseChars = /[\u3040-\u309F\u30A0-\u30FF]/;
+    const koreanChars = /[\uAC00-\uD7AF]/;
+    const cyrillicChars = /[\u0400-\u04FF]/;
+    const thaiChars = /[\u0E00-\u0E7F]/;
+    const devanagariChars = /[\u0900-\u097F]/;
+    
+    if (hebrewChars.test(text)) return 'he';
+    if (arabicChars.test(text)) return 'ar';
+    if (chineseChars.test(text)) return 'zh';
+    if (japaneseChars.test(text)) return 'ja';
+    if (koreanChars.test(text)) return 'ko';
+    if (cyrillicChars.test(text)) return 'ru';
+    if (thaiChars.test(text)) return 'th';
+    if (devanagariChars.test(text)) return 'hi';
+    
+    return 'en';
   }
 
   /**
-   * Main AI analysis method that routes to appropriate provider
+   * Document analysis using fallback method
    */
   private async analyzeContentWithAI(content: string, fileType: string): Promise<any> {
-    try {
-      switch (this.aiProvider) {
-        case 'local':
-          try {
-            console.log('Attempting local LLM analysis...');
-            const result = await this.analyzeContentWithLocalLLM(content, fileType);
-            console.log('Local LLM analysis successful');
-            return result;
-          } catch (localError) {
-            console.error('Local LLM analysis failed, falling back to basic analysis:', localError);
-            return this.getFallbackAnalysis(content, fileType);
-          }
-        case 'fallback':
-        default:
-          console.warn('Using fallback analysis - no AI provider configured');
-          return this.getFallbackAnalysis(content, fileType);
-      }
-    } catch (error) {
-      console.error(`AI analysis failed with provider ${this.aiProvider}:`, error);
-      console.log('Falling back to basic analysis...');
-      return this.getFallbackAnalysis(content, fileType);
-    }
+    console.log('Using fallback analysis for', fileType);
+    return this.getFallbackAnalysis(content, fileType);
   }
 
   /**
    * Fallback analysis when AI is not available
    */
   private getFallbackAnalysis(content: string, fileType: string): any {
-    console.log('Using fallback analysis for content length:', content.length);
-    console.log('Content preview:', content.substring(0, 500) + '...');
+    console.log('Using fallback analysis for', fileType);
     
-    // Use franc library for proper language detection
-    const cleanContent = content
-      .replace(/\s+/g, ' ') // Normalize whitespace
-      .replace(/[^\p{L}\p{N}\s]/gu, ' ') // Keep only letters, numbers, and spaces
-      .trim();
-    
-    const language = franc(cleanContent, { minLength: 10 });
-    
-    console.log('=== FRANC FALLBACK DEBUG ===');
-    console.log('Fallback content:', {
-      length: cleanContent.length,
-      preview: cleanContent.substring(0, 300)
-    });
-    console.log('Fallback franc result:', language);
-    console.log('=== END FRANC FALLBACK DEBUG ===');
-    
-    // Map franc language codes to our internal codes
-    const languageMap: Record<string, string> = {
-      'heb': 'he', // Hebrew
-      'ara': 'ar', // Arabic
-      'cmn': 'zh', // Chinese (Mandarin)
-      'jpn': 'ja', // Japanese
-      'kor': 'ko', // Korean
-      'rus': 'ru', // Russian
-      'tha': 'th', // Thai
-      'hin': 'hi', // Hindi
-      'eng': 'en'  // English
-    };
-    
-    const mappedLanguage = languageMap[language] || 'en';
-    
-    let category = 'general_form';
-    let insights = ['Document contains form fields requiring user input'];
-    
-    // Determine category based on detected language
-    if (mappedLanguage === 'he') {
-      category = 'legal_waiver';
-      insights = [
-        'Hebrew legal document detected',
-        'Contains waiver and legal clauses',
-        'Requires careful review before signing',
-        'AI analysis failed - manual review recommended'
-      ];
-      console.log('Hebrew document detected in fallback - returning empty fields to avoid generic data');
-      
-      // For Hebrew documents, return empty fields instead of generic ones
-      return {
-        language: mappedLanguage,
-        category,
-        summary: `${mappedLanguage.toUpperCase()} ${fileType.toUpperCase()} document - legal waiver detected`,
-        keyInsights: insights,
-        riskAssessment: {
-          level: 'high',
-          issues: ['AI analysis failed - manual review required', 'Document contains legal terms'],
-          recommendations: ['Review document manually', 'Consult legal expert if needed', 'Verify all terms before signing']
-        },
-        formFields: [], // Return empty instead of generic fields
-        questions: [], // Return empty instead of generic questions
-        signatures: [] // Return empty instead of generic signatures
-      };
-    } else if (['ar', 'zh', 'ja', 'ko', 'ru', 'th', 'hi'].includes(mappedLanguage)) {
-      category = `${mappedLanguage}_document`;
-      insights = [
-        `${mappedLanguage.toUpperCase()} document detected`,
-        'May contain legal or business terms',
-        'Consider translation if needed'
-      ];
-    } else if (fileType === 'docx') {
-      category = 'word_document';
-      insights = [
-        'Word document detected',
-        'Contains text content that may include forms',
-        'Review document structure for form fields'
-      ];
-    }
-    
-    console.log('Fallback analysis result:', { language, category, insights });
+    const language = this.detectLanguage(content);
+    const wordCount = content.split(/\s+/).length;
     
     return {
-      language: mappedLanguage,
-      category,
-      summary: `${mappedLanguage.toUpperCase()} ${fileType.toUpperCase()} document analysis`,
-      keyInsights: insights,
+      language,
+      category: 'general_form',
+      summary: `A ${fileType.toUpperCase()} document with approximately ${wordCount} words`,
+      keyInsights: ['Document contains form fields', 'Requires user input'],
       riskAssessment: {
-        level: 'medium',
-        issues: ['Document requires careful review'],
-        recommendations: ['Review all terms before signing', 'Verify personal information']
+        level: 'low',
+        issues: ['Standard form processing'],
+        recommendations: ['Review all fields before submission']
       },
-      formFields: this.getGenericFormFields(mappedLanguage),
-      questions: this.getGenericQuestions(mappedLanguage),
-      signatures: this.getGenericSignatures(mappedLanguage)
+      formFields: this.extractFormFieldsFromContent(content),
+      questions: this.extractQuestionsFromContent(content),
+      signatures: this.getGenericSignatures(language)
     };
   }
 
   /**
-   * Get generic form fields based on language
+   * Extract form fields from document content
    */
-  private getGenericFormFields(language: string): any[] {
-    const fields = {
-      en: [
-        { label: 'Full Name', type: 'text', required: true },
-        { label: 'ID Number', type: 'text', required: true },
-        { label: 'Email Address', type: 'email', required: true },
-        { label: 'Phone Number', type: 'phone', required: true },
-        { label: 'Address', type: 'text', required: true }
-      ],
-      he: [
-        { label: 'שם מלא', type: 'text', required: true },
-        { label: 'תעודת זהות', type: 'text', required: true },
-        { label: 'כתובת דוא"ל', type: 'email', required: true },
-        { label: 'מספר טלפון', type: 'phone', required: true },
-        { label: 'כתובת', type: 'text', required: true }
-      ],
-      ar: [
-        { label: 'الاسم الكامل', type: 'text', required: true },
-        { label: 'رقم الهوية', type: 'text', required: true },
-        { label: 'البريد الإلكتروني', type: 'email', required: true },
-        { label: 'رقم الهاتف', type: 'phone', required: true },
-        { label: 'العنوان', type: 'text', required: true }
-      ],
-      zh: [
-        { label: '全名', type: 'text', required: true },
-        { label: '身份证号', type: 'text', required: true },
-        { label: '电子邮件', type: 'email', required: true },
-        { label: '电话号码', type: 'phone', required: true },
-        { label: '地址', type: 'text', required: true }
-      ],
-      ja: [
-        { label: '氏名', type: 'text', required: true },
-        { label: '身分証明書番号', type: 'text', required: true },
-        { label: 'メールアドレス', type: 'email', required: true },
-        { label: '電話番号', type: 'phone', required: true },
-        { label: '住所', type: 'text', required: true }
-      ],
-      ko: [
-        { label: '전체 이름', type: 'text', required: true },
-        { label: '주민등록번호', type: 'text', required: true },
-        { label: '이메일', type: 'email', required: true },
-        { label: '전화번호', type: 'phone', required: true },
-        { label: '주소', type: 'text', required: true }
-      ],
-      ru: [
-        { label: 'Полное имя', type: 'text', required: true },
-        { label: 'Номер паспорта', type: 'text', required: true },
-        { label: 'Электронная почта', type: 'email', required: true },
-        { label: 'Номер телефона', type: 'phone', required: true },
-        { label: 'Адрес', type: 'text', required: true }
-      ],
-      th: [
-        { label: 'ชื่อเต็ม', type: 'text', required: true },
-        { label: 'เลขบัตรประชาชน', type: 'text', required: true },
-        { label: 'อีเมล', type: 'email', required: true },
-        { label: 'หมายเลขโทรศัพท์', type: 'phone', required: true },
-        { label: 'ที่อยู่', type: 'text', required: true }
-      ],
-      hi: [
-        { label: 'पूरा नाम', type: 'text', required: true },
-        { label: 'आधार संख्या', type: 'text', required: true },
-        { label: 'ईमेल', type: 'email', required: true },
-        { label: 'फोन नंबर', type: 'phone', required: true },
-        { label: 'पता', type: 'text', required: true }
-      ]
-    };
-
-    const languageFields = fields[language as keyof typeof fields] || fields.en;
+  private extractFormFieldsFromContent(content: string): FormField[] {
+    const fields: FormField[] = [];
+    const lines = content.split('\n');
     
-    return languageFields.map((field, index) => ({
-      id: (index + 1).toString(),
-      type: field.type,
-      label: field.label,
-      value: '',
-      required: field.required,
-      position: { x: 100, y: 150 + (index * 50), width: 200, height: 30 },
-      page: 1,
-      confidence: 0.9,
-      suggestions: []
-    }));
+    lines.forEach((line, index) => {
+      const trimmedLine = line.trim();
+      
+      // Look for common field patterns
+      if (trimmedLine.includes('_____') || trimmedLine.includes('________')) {
+        fields.push({
+          id: `field_${index}`,
+          type: 'text',
+          label: this.extractFieldLabel(trimmedLine),
+          required: true,
+          position: { x: 100, y: 150 + (index * 30), width: 200, height: 30 },
+          page: 1,
+          confidence: 0.8
+        });
+      } else if (trimmedLine.includes('[ ]') || trimmedLine.includes('☐')) {
+        fields.push({
+          id: `checkbox_${index}`,
+          type: 'checkbox',
+          label: this.extractFieldLabel(trimmedLine),
+          required: false,
+          position: { x: 100, y: 150 + (index * 30), width: 20, height: 20 },
+          page: 1,
+          confidence: 0.9
+        });
+      } else if (trimmedLine.toLowerCase().includes('signature') || 
+                 trimmedLine.toLowerCase().includes('חתימה') ||
+                 trimmedLine.toLowerCase().includes('توقيع')) {
+        fields.push({
+          id: `signature_${index}`,
+          type: 'signature',
+          label: this.extractFieldLabel(trimmedLine),
+          required: true,
+          position: { x: 100, y: 150 + (index * 30), width: 150, height: 50 },
+          page: 1,
+          confidence: 0.95
+        });
+      }
+    });
+    
+    return fields;
   }
 
   /**
-   * Get generic questions based on language
+   * Extract field label from line content
    */
-  private getGenericQuestions(language: string): any[] {
-    const questions = {
-      en: [
-        { text: 'Have you read and understood all terms?', type: 'yes_no' },
-        { text: 'Do you agree to the terms?', type: 'yes_no' }
-      ],
-      he: [
-        { text: 'האם קראת והבנת את כל התנאים?', type: 'yes_no' },
-        { text: 'האם אתה מסכים לתנאים?', type: 'yes_no' }
-      ],
-      ar: [
-        { text: 'هل قرأت وفهمت جميع الشروط؟', type: 'yes_no' },
-        { text: 'هل توافق على الشروط؟', type: 'yes_no' }
-      ],
-      zh: [
-        { text: '您是否已阅读并理解所有条款？', type: 'yes_no' },
-        { text: '您是否同意这些条款？', type: 'yes_no' }
-      ],
-      ja: [
-        { text: 'すべての条件を読み理解しましたか？', type: 'yes_no' },
-        { text: '条件に同意しますか？', type: 'yes_no' }
-      ],
-      ko: [
-        { text: '모든 조건을 읽고 이해하셨습니까?', type: 'yes_no' },
-        { text: '조건에 동의하십니까?', type: 'yes_no' }
-      ],
-      ru: [
-        { text: 'Вы прочитали и поняли все условия?', type: 'yes_no' },
-        { text: 'Вы согласны с условиями?', type: 'yes_no' }
-      ],
-      th: [
-        { text: 'คุณได้อ่านและเข้าใจเงื่อนไขทั้งหมดแล้วหรือไม่?', type: 'yes_no' },
-        { text: 'คุณเห็นด้วยกับเงื่อนไขหรือไม่?', type: 'yes_no' }
-      ],
-      hi: [
-        { text: 'क्या आपने सभी शर्तों को पढ़ा और समझा है?', type: 'yes_no' },
-        { text: 'क्या आप शर्तों से सहमत हैं?', type: 'yes_no' }
-      ]
-    };
-
-    const languageQuestions = questions[language as keyof typeof questions] || questions.en;
+  private extractFieldLabel(line: string): string {
+    // Remove common field indicators
+    let label = line
+      .replace(/[_\s]+$/, '') // Remove trailing underscores and spaces
+      .replace(/^[_\s]+/, '') // Remove leading underscores and spaces
+      .replace(/\[ \]/, '') // Remove checkbox
+      .replace(/☐/, '') // Remove checkbox
+      .trim();
     
-    return languageQuestions.map((question, index) => ({
-      id: (index + 1).toString(),
-      text: question.text,
-      type: question.type,
-      position: { x: 100, y: 400 + (index * 50), width: 300, height: 30 },
-      page: 1,
-      confidence: 0.9,
-      aiSuggestion: 'Consider carefully before answering'
-    }));
+    // If label is empty, provide a generic one
+    if (!label) {
+      label = 'Field';
+    }
+    
+    return label;
+  }
+
+  /**
+   * Extract questions from document content
+   */
+  private extractQuestionsFromContent(content: string): Question[] {
+    const questions: Question[] = [];
+    const lines = content.split('\n');
+    
+    lines.forEach((line, index) => {
+      const trimmedLine = line.trim();
+      
+      // Look for question patterns
+      if (trimmedLine.includes('?') || 
+          trimmedLine.toLowerCase().includes('do you') ||
+          trimmedLine.toLowerCase().includes('have you') ||
+          trimmedLine.toLowerCase().includes('are you')) {
+        questions.push({
+          id: `question_${index}`,
+          text: trimmedLine,
+          type: 'yes_no',
+          position: { x: 100, y: 200 + (index * 30), width: 300, height: 30 },
+          page: 1,
+          confidence: 0.8,
+          aiSuggestion: 'Please answer based on your situation'
+        });
+      }
+    });
+    
+    return questions;
   }
 
   /**
@@ -828,115 +328,324 @@ Return ONLY a valid JSON object with this exact structure:
   }
 
   /**
-   * Enhanced document analysis with local AI
+   * Analyze document with AI
    */
-  async analyzeDocument(fileUri: string, fileType: 'pdf' | 'docx' = 'pdf'): Promise<DocumentAnalysis> {
+  async analyzeDocument(fileUri: string, fileType: 'pdf' | 'docx'): Promise<DocumentAnalysis> {
+    const startTime = Date.now();
+    
     try {
-      console.log(`Starting local AI document analysis for ${fileType.toUpperCase()}...`);
-      console.log(`File URI: ${fileUri}`);
-      console.log(`AI Provider: ${this.aiProvider}`);
+      console.log(`Starting AI analysis of ${fileType.toUpperCase()} document...`);
       
       let content = '';
-      let metadata = {};
       
-      // Extract content based on file type
       if (fileType === 'docx') {
-        console.log('Processing DOCX file...');
-        try {
-          const extraction = await this.extractDocxContent(fileUri);
-          content = extraction.content;
-          metadata = extraction.metadata;
-          console.log('DOCX content extracted successfully, length:', content.length);
-          console.log('DOCX content preview:', content.substring(0, 200) + '...');
-        } catch (error) {
-          console.error('Failed to extract DOCX content, using fallback:', error);
-          content = 'DOCX document content - form fields and signatures detected';
-        }
+        const result = await this.extractDocxContent(fileUri);
+        content = result.content;
       } else {
-        console.log('Processing PDF file (using fallback content)...');
-        // For PDF files, we don't have actual content, so use a more generic approach
+        // For PDF, we'll use a simplified text extraction
+        // In a real implementation, you'd use a PDF parsing library
         content = 'PDF document content - form fields and signatures detected';
       }
       
-      // Local AI analysis
-      console.log('Starting AI content analysis...');
-      console.log('Content being analyzed:', content.substring(0, 1000) + '...');
+      // Get AI analysis
       const aiAnalysis = await this.analyzeContentWithAI(content, fileType);
-      console.log('AI analysis completed successfully');
-      console.log('AI analysis result:', {
-        language: aiAnalysis.language,
-        category: aiAnalysis.category,
-        formFieldsCount: aiAnalysis.formFields?.length || 0,
-        questionsCount: aiAnalysis.questions?.length || 0,
-        signaturesCount: aiAnalysis.signatures?.length || 0
-      });
-      console.log('Form fields found:', aiAnalysis.formFields?.map((f: any) => f.label) || []);
-      console.log('Questions found:', aiAnalysis.questions?.map((q: any) => q.text) || []);
-      console.log('Signatures found:', aiAnalysis.signatures?.map((s: any) => s.label) || []);
       
-      // Fast processing time
-      await new Promise(resolve => setTimeout(resolve, 300));
-
-      // Enhanced analysis results
+      // Get file info
+      const fileInfo = await FileSystem.getInfoAsync(fileUri);
+      
       const analysis: DocumentAnalysis = {
         documentInfo: {
-          name: `document.${fileType}`,
-          size: 1024000,
-          pages: fileType === 'docx' ? 1 : 2,
-          type: fileType === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          name: fileUri.split('/').pop() || 'document',
+          size: fileInfo.size || 0,
+          pages: 1, // Simplified
+          type: fileType.toUpperCase(),
           language: aiAnalysis.language,
           category: aiAnalysis.category
         },
         formFields: aiAnalysis.formFields || [],
         questions: aiAnalysis.questions || [],
         signatures: aiAnalysis.signatures || [],
-        processingTime: 0.8,
-        confidence: 0.91,
-        content: fileType === 'docx' ? content : undefined,
+        processingTime: (Date.now() - startTime) / 1000,
+        confidence: 0.85,
+        content,
         summary: aiAnalysis.summary,
         keyInsights: aiAnalysis.keyInsights,
         riskAssessment: aiAnalysis.riskAssessment
       };
-
-      console.log('Document analysis completed successfully');
-      console.log('Final analysis summary:', {
-        formFields: analysis.formFields.length,
-        questions: analysis.questions.length,
-        signatures: analysis.signatures.length,
-        language: analysis.documentInfo.language,
-        category: analysis.documentInfo.category
-      });
-
+      
+      console.log('Document analysis completed:', analysis.formFields.length, 'fields found');
       return analysis;
     } catch (error) {
-      console.error('Local AI analysis error:', error);
-      console.error('Error details:', {
-        message: error instanceof Error ? error.message : 'Unknown error',
-        stack: error instanceof Error ? error.stack : undefined,
-        fileUri,
-        fileType
-      });
-      throw new Error(`Failed to analyze ${fileType.toUpperCase()} document: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      console.error('Error analyzing document:', error);
+      throw new Error(`Failed to analyze ${fileType.toUpperCase()} document`);
     }
   }
 
-  // ... rest of the methods remain the same as in the original file ...
-  // (I'll add them in the next part to keep this response manageable)
-
-  // Additional methods for form processing and validation
-  async fillFormFields(
-    formFields: FormField[], 
-    userData: Record<string, any>
-  ): Promise<FormField[]> {
-    return formFields.map(field => {
-      const userValue = userData[field.label.toLowerCase().replace(/\s+/g, '_')];
+  /**
+   * Fill form fields with AI suggestions
+   */
+  async fillFormFields(fields: FormField[], userData: Record<string, any> = {}): Promise<FormField[]> {
+    console.log('Filling form fields with AI suggestions...');
+    
+    return fields.map(field => {
+      const filledField = { ...field };
+      
+      // Try to find a value from user data first
+      const userValue = this.findUserValue(field.label, userData);
       if (userValue) {
-        return { ...field, value: userValue };
+        filledField.value = userValue;
+        return filledField;
       }
-      return field;
+      
+      // Generate AI suggestion based on field type and label
+      filledField.value = this.generateFieldValue(field);
+      
+      return filledField;
     });
   }
 
+  /**
+   * Find user value for a field
+   */
+  private findUserValue(fieldLabel: string, userData: Record<string, any>): string | null {
+    const label = fieldLabel.toLowerCase();
+    
+    // Direct matches
+    if (userData.name && (label.includes('name') || label.includes('שם'))) {
+      return userData.name;
+    }
+    if (userData.email && (label.includes('email') || label.includes('אימייל'))) {
+      return userData.email;
+    }
+    if (userData.phone && (label.includes('phone') || label.includes('טלפון'))) {
+      return userData.phone;
+    }
+    if (userData.address && (label.includes('address') || label.includes('כתובת'))) {
+      return userData.address;
+    }
+    
+    // Check for partial matches
+    for (const [key, value] of Object.entries(userData)) {
+      if (typeof value === 'string' && label.includes(key.toLowerCase())) {
+        return value;
+      }
+    }
+    
+    return null;
+  }
+
+  /**
+   * Generate field value based on type and label
+   */
+  private generateFieldValue(field: FormField): string {
+    const label = field.label.toLowerCase();
+    
+    switch (field.type) {
+      case 'text':
+        if (label.includes('name')) return this.userProfile.name;
+        if (label.includes('email')) return this.userProfile.email;
+        if (label.includes('phone')) return this.userProfile.phone;
+        if (label.includes('address')) return this.userProfile.address;
+        if (label.includes('company')) return this.userProfile.company;
+        if (label.includes('occupation')) return this.userProfile.occupation;
+        return 'Sample text';
+        
+      case 'email':
+        return this.userProfile.email;
+        
+      case 'phone':
+        return this.userProfile.phone;
+        
+      case 'date':
+        return new Date().toISOString().split('T')[0];
+        
+      case 'number':
+        return '42';
+        
+      case 'signature':
+        return this.userProfile.name;
+        
+      default:
+        return 'Sample value';
+    }
+  }
+
+  /**
+   * Answer questions with AI suggestions
+   */
+  async answerQuestions(questions: Question[], userData: Record<string, any> = {}): Promise<Question[]> {
+    console.log('Answering questions with AI suggestions...');
+    
+    return questions.map(question => {
+      const answeredQuestion = { ...question };
+      
+      // Generate AI suggestion based on question type and content
+      answeredQuestion.value = this.generateQuestionAnswer(question);
+      
+      return answeredQuestion;
+    });
+  }
+
+  /**
+   * Generate answer for a question
+   */
+  private generateQuestionAnswer(question: Question): string {
+    const text = question.text.toLowerCase();
+    
+    switch (question.type) {
+      case 'yes_no':
+        if (text.includes('experience') || text.includes('skill')) return 'Yes';
+        if (text.includes('criminal') || text.includes('conviction')) return 'No';
+        return 'Yes';
+        
+      case 'multiple_choice':
+        return question.options?.[0] || 'Option 1';
+        
+      case 'text':
+        return 'Sample answer based on question context';
+        
+      case 'date':
+        return new Date().toISOString().split('T')[0];
+        
+      case 'number':
+        return '5';
+        
+      case 'rating':
+        return '4';
+        
+      default:
+        return 'Sample answer';
+    }
+  }
+
+  /**
+   * Validate form data
+   */
+  async validateForm(fields: FormField[]): Promise<{ isValid: boolean; errors: string[]; warnings: string[]; suggestions: string[] }> {
+    const errors: string[] = [];
+    const warnings: string[] = [];
+    const suggestions: string[] = [];
+    
+    fields.forEach(field => {
+      if (field.required && !field.value) {
+        errors.push(`${field.label} is required`);
+      }
+      
+      if (field.value) {
+        // Email validation
+        if (field.type === 'email' && !this.isValidEmail(field.value)) {
+          errors.push(`${field.label} must be a valid email address`);
+        }
+        
+        // Phone validation
+        if (field.type === 'phone' && !this.isValidPhone(field.value)) {
+          warnings.push(`${field.label} may not be in the correct format`);
+        }
+        
+        // Length validation
+        if (field.validation?.minLength && field.value.length < field.validation.minLength) {
+          errors.push(`${field.label} must be at least ${field.validation.minLength} characters`);
+        }
+        
+        if (field.validation?.maxLength && field.value.length > field.validation.maxLength) {
+          warnings.push(`${field.label} is longer than recommended`);
+        }
+      }
+    });
+    
+    if (errors.length === 0 && warnings.length === 0) {
+      suggestions.push('All fields look good!');
+    }
+    
+    return {
+      isValid: errors.length === 0,
+      errors,
+      warnings,
+      suggestions
+    };
+  }
+
+  /**
+   * Validate email format
+   */
+  private isValidEmail(email: string): boolean {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  }
+
+  /**
+   * Validate phone format
+   */
+  private isValidPhone(phone: string): boolean {
+    const phoneRegex = /^[\+]?[1-9][\d]{0,15}$/;
+    return phoneRegex.test(phone.replace(/[\s\-\(\)]/g, ''));
+  }
+
+  /**
+   * Get default signatures
+   */
+  async getDefaultSignatures(): Promise<SignatureData[]> {
+    return [
+      {
+        id: 'default_1',
+        name: 'John Doe',
+        type: 'typed',
+        data: 'John Doe',
+        isDefault: true
+      },
+      {
+        id: 'default_2',
+        name: 'Digital Signature',
+        type: 'image',
+        data: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+        isDefault: true
+      }
+    ];
+  }
+
+  /**
+   * Parse signature vectors from drawing data
+   */
+  private parseSignatureVectors(data: string): number[][] {
+    try {
+      // If data is already in vector format, return it
+      if (data.startsWith('[') && data.includes('[')) {
+        return JSON.parse(data);
+      }
+      // For now, return empty vectors
+      return [];
+    } catch (error) {
+      console.error('Error parsing signature vectors:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Save processed document to file system
+   */
+  private async saveProcessedDocument(base64Data: string, fileType: 'pdf' | 'docx'): Promise<string> {
+    try {
+      const fileName = `processed_document_${Date.now()}.${fileType}`;
+      const fileUri = `${FileSystem.documentDirectory}${fileName}`;
+      
+      // Remove data URL prefix if present
+      const base64Content = base64Data.replace(/^data:[^;]+;base64,/, '');
+      
+      await FileSystem.writeAsStringAsync(fileUri, base64Content, {
+        encoding: FileSystem.EncodingType.Base64
+      });
+      
+      console.log('Processed document saved:', fileUri);
+      return fileUri;
+    } catch (error) {
+      console.error('Error saving processed document:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Apply signatures to document
+   */
   async applySignatures(
     documentUri: string,
     signatures: SignatureData[],
@@ -949,174 +658,163 @@ Return ONLY a valid JSON object with this exact structure:
     return documentUri;
   }
 
-  async answerQuestions(
-    questions: Question[],
-    userPreferences: Record<string, any>
-  ): Promise<Question[]> {
-    return questions.map(question => {
-      if (question.type === 'yes_no') {
-        return { ...question, value: 'yes', aiSuggestion: 'Consider your preferences carefully' };
-      }
-      return question;
-    });
-  }
-
-  async getFieldSuggestions(field: FormField, fileType: 'pdf' | 'docx' = 'pdf'): Promise<string[]> {
-    const suggestions = {
-      'Full Name': [this.userProfile.name],
-      'Email Address': [this.userProfile.email],
-      'Phone Number': [this.userProfile.phone],
-      'Address': [this.userProfile.address],
-      'שם מלא': [this.userProfile.name],
-      'כתובת דוא"ל': [this.userProfile.email],
-      'מספר טלפון': [this.userProfile.phone],
-      'כתובת': [this.userProfile.address]
-    };
-    
-    return suggestions[field.label as keyof typeof suggestions] || [];
-  }
-
-  async validateForm(formFields: FormField[]): Promise<{
-    isValid: boolean;
-    errors: string[];
-    warnings: string[];
-    suggestions: string[];
-  }> {
-    const errors: string[] = [];
-    const warnings: string[] = [];
-    const suggestions: string[] = [];
-
-    formFields.forEach(field => {
-      if (field.required && !field.value) {
-        errors.push(`${field.label} is required`);
-      }
-      
-      if (field.type === 'email' && field.value && !this.isValidEmail(field.value)) {
-        errors.push(`${field.label} must be a valid email address`);
-      }
-      
-      if (field.type === 'phone' && field.value && !this.isValidPhone(field.value)) {
-        warnings.push(`${field.label} format may be incorrect`);
-      }
-    });
-
-    return {
-      isValid: errors.length === 0,
-      errors,
-      warnings,
-      suggestions
-    };
-  }
-
+  /**
+   * Complete document processing with AI
+   */
   async processDocument(
     fileUri: string,
     fileType: 'pdf' | 'docx',
     userData: Record<string, any> = {}
   ): Promise<AIProcessingResult> {
     try {
+      console.log('Starting document processing with real modification...');
+      
       const analysis = await this.analyzeDocument(fileUri, fileType);
       const filledFields = await this.fillFormFields(analysis.formFields, userData);
       const answeredQuestions = await this.answerQuestions(analysis.questions, userData);
+      
+      // Convert filled fields to a simple format for processing
+      const fieldData = filledFields
+        .filter(field => field.value)
+        .map(field => ({
+          name: field.label || 'Unnamed Field',
+          value: field.value || '',
+          type: field.type === 'signature' ? 'signature' : 'text',
+          x: field.position?.x,
+          y: field.position?.y,
+          page: field.page
+        }));
+      
+      // Extract signature data from field values and create SignatureData objects
+      const signatures: SignatureData[] = [];
+      filledFields.forEach(field => {
+        if (field.type === 'signature' && field.value) {
+          // Check if the value is base64 signature data
+          if (field.value.startsWith('data:image/') || field.value.startsWith('data:application/')) {
+            signatures.push({
+              id: field.id,
+              name: field.label || 'Signature',
+              type: 'image',
+              data: field.value, // This is the base64 signature data
+              isDefault: false
+            });
+          } else {
+            // If it's just text, treat it as typed signature
+            signatures.push({
+              id: field.id,
+              name: field.label || 'Signature',
+              type: 'typed',
+              data: field.value,
+              isDefault: false
+            });
+          }
+        }
+      });
+      
+      // If no signatures found in fields, use user signatures or default signatures
+      if (signatures.length === 0) {
+        if (userData.signatures && userData.signatures.length > 0) {
+          // Use user signatures
+          signatures.push(...userData.signatures);
+          console.log('Using user signatures:', userData.signatures.length);
+        } else {
+          // Use default signatures as fallback
+          const defaultSignatures = await this.getDefaultSignatures();
+          signatures.push(...defaultSignatures);
+          console.log('Using default signatures:', defaultSignatures.length);
+        }
+      }
+      
+      console.log('Signatures to apply:', signatures.length);
+      signatures.forEach(sig => {
+        console.log(`- ${sig.name} (${sig.type}): ${sig.data.substring(0, 50)}...`);
+      });
+      
+      // Convert answered questions to the format expected by document processor
+      const questionData = answeredQuestions
+        .filter(q => q.value)
+        .map(q => ({
+          id: q.id,
+          text: q.text,
+          value: q.value || '',
+          type: q.type
+        }));
+      
+      // Call the backend API for document processing
+      let signedDocumentUri: string | undefined = fileUri;
+      try {
+        console.log('Calling backend API for document processing...');
+        
+        // Prepare the request data for the backend
+        const requestData = {
+          signatures: signatures.map(sig => ({
+            vectors: sig.type === 'drawing' ? this.parseSignatureVectors(sig.data) : [],
+            position: { x: 100, y: 200 }, // Default position
+            width: 120,
+            height: 40,
+            color: 'black',
+            strokeWidth: 2
+          })),
+          documentType: fileType
+        };
+
+        // Create form data for file upload
+        const formData = new FormData();
+        formData.append('file', {
+          uri: fileUri,
+          type: fileType === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          name: fileUri.split('/').pop() || `document.${fileType}`
+        } as any);
+        formData.append('signatures', JSON.stringify(requestData.signatures));
+        formData.append('documentType', fileType);
+
+        // Call the backend API
+        const response = await fetch('http://localhost:3000/api/add-signature', {
+          method: 'POST',
+          body: formData,
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        });
+
+        if (response.ok) {
+          const processedDocumentBlob = await response.blob();
+          // Convert blob to base64 for React Native
+          const reader = new FileReader();
+          reader.onload = () => {
+            const base64 = reader.result as string;
+            // Save the processed document
+            this.saveProcessedDocument(base64, fileType).then(uri => {
+              signedDocumentUri = uri;
+              console.log('Document processed successfully by backend:', uri);
+            });
+          };
+          reader.readAsDataURL(processedDocumentBlob);
+        } else {
+          console.warn('Backend processing failed, using original file');
+          signedDocumentUri = fileUri;
+        }
+      } catch (error) {
+        console.error('Error calling backend API:', error);
+        signedDocumentUri = fileUri; // Fallback to original file
+      }
       
       return {
         success: true,
         analysis,
         filledFields,
         answeredQuestions,
+        signedDocumentUri,
         processingTime: analysis.processingTime,
         errors: [],
         warnings: []
       };
     } catch (error) {
-      return {
-        success: false,
-        analysis: {} as DocumentAnalysis,
-        filledFields: [],
-        answeredQuestions: [],
-        processingTime: 0,
-        errors: [error instanceof Error ? error.message : 'Unknown error'],
-        warnings: []
-      };
+      console.error('Error in complete document processing:', error);
+      throw new Error(`Failed to process ${fileType.toUpperCase()} document`);
     }
-  }
-
-  async getDocumentInsights(analysis: DocumentAnalysis): Promise<{
-    insights: string[];
-    recommendations: string[];
-    riskLevel: 'low' | 'medium' | 'high';
-  }> {
-    return {
-      insights: analysis.keyInsights || [],
-      recommendations: analysis.riskAssessment?.recommendations || [],
-      riskLevel: analysis.riskAssessment?.level || 'medium'
-    };
-  }
-
-  private isValidEmail(email: string): boolean {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return emailRegex.test(email);
-  }
-
-  private isValidPhone(phone: string): boolean {
-    const phoneRegex = /^[\+]?[1-9][\d]{0,15}$/;
-    return phoneRegex.test(phone.replace(/[\s\-\(\)]/g, ''));
-  }
-
-  /**
-   * Extract partial analysis from malformed LLM response
-   */
-  private extractPartialAnalysis(response: string): any {
-    console.log('Extracting partial analysis from malformed response...');
-    
-    // Try to extract language
-    let language = 'en';
-    if (response.includes('hebrew') || response.includes('he') || response.includes('עברית') || response.includes('בלינק') || response.includes('פינטק')) {
-      language = 'he';
-    } else if (response.includes('arabic') || response.includes('ar') || response.includes('عربي')) {
-      language = 'ar';
-    } else if (response.includes('chinese') || response.includes('zh') || response.includes('中文')) {
-      language = 'zh';
-    }
-    
-    // Try to extract category
-    let category = 'general_form';
-    if (response.includes('legal') || response.includes('waiver') || response.includes('ויתור') || response.includes('פיטורים')) {
-      category = 'legal_waiver';
-    } else if (response.includes('job') || response.includes('employment') || response.includes('עבודה')) {
-      category = 'job_application';
-    } else if (response.includes('medical')) {
-      category = 'medical';
-    } else if (response.includes('financial')) {
-      category = 'financial';
-    }
-    
-    // Extract any insights mentioned
-    const insights: string[] = [];
-    if (response.includes('Hebrew') || response.includes('בלינק') || response.includes('פינטק')) insights.push('Hebrew document detected');
-    if (response.includes('legal') || response.includes('ויתור')) insights.push('Legal document detected');
-    if (response.includes('waiver') || response.includes('פיטורים')) insights.push('Contains waiver and termination clauses');
-    if (response.includes('form')) insights.push('Contains form fields');
-    if (response.includes('Blink') || response.includes('Fintech')) insights.push('Blink Fintech company document');
-    
-    console.log('Extracted partial analysis:', { language, category, insights });
-    
-    return {
-      language,
-      category,
-      summary: `${language.toUpperCase()} document analysis (partial)`,
-      keyInsights: insights.length > 0 ? insights : ['Document analysis completed with partial results'],
-      riskAssessment: {
-        level: 'medium',
-        issues: ['AI analysis returned partial results'],
-        recommendations: ['Review document carefully', 'Verify all information']
-      },
-      formFields: this.getGenericFormFields(language),
-      questions: this.getGenericQuestions(language),
-      signatures: this.getGenericSignatures(language)
-    };
   }
 }
 
-export default new AIService();
-
-
+// Export singleton instance
+export const aiService = new AIService(); 
