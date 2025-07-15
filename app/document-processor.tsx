@@ -7,6 +7,7 @@ import { ActivityIndicator, Alert, ScrollView, StyleSheet, Switch, Text, TextInp
 import { SafeAreaView } from 'react-native-safe-area-context';
 import SignatureDrawer from '../components/SignatureDrawer';
 import { AIProcessingResult, aiService, DocumentAnalysis, FormField, Question, SignatureData } from '../services/aiService';
+import { recentDocumentsService } from '../services/recentDocumentsService';
 
 export default function DocumentProcessorScreen() {
   const params = useLocalSearchParams();
@@ -169,6 +170,24 @@ export default function DocumentProcessorScreen() {
       
       setProcessingResult(result);
       setCurrentStep('complete');
+      
+      // Save to recent documents
+      try {
+        await recentDocumentsService.addRecentDocument({
+          name: params.name as string || 'Document',
+          originalUri: params.uri as string,
+          processedUri: result.signedDocumentUri,
+          type: documentType,
+          size: typeof params.size === 'number' ? params.size : parseInt(params.size as string) || 0,
+          formFieldsCount: analysis?.formFields.length || 0,
+          signaturesCount: analysis?.signatures.length || 0,
+          language: analysis?.documentInfo.language,
+          category: analysis?.documentInfo.category
+        });
+        console.log('Document saved to recent documents');
+      } catch (error) {
+        console.error('Error saving to recent documents:', error);
+      }
     } catch (error) {
       Alert.alert('Error', `Failed to process ${documentType.toUpperCase()} document`);
       console.error('Processing error:', error);

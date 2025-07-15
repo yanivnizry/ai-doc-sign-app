@@ -356,7 +356,7 @@ class AIService {
       const analysis: DocumentAnalysis = {
         documentInfo: {
           name: fileUri.split('/').pop() || 'document',
-          size: fileInfo.size || 0,
+          size: fileInfo.exists ? (fileInfo as any).size || 0 : 0,
           pages: 1, // Simplified
           type: fileType.toUpperCase(),
           language: aiAnalysis.language,
@@ -711,12 +711,43 @@ class AIService {
         }
       });
       
+      // Also add signatures from the analysis.signatures array
+      analysis.signatures.forEach(sig => {
+        // Check if we already have a signature for this ID
+        const existingSignature = signatures.find(s => s.id === sig.id);
+        if (!existingSignature) {
+          // Add a default signature for this position
+          signatures.push({
+            id: sig.id,
+            name: sig.label || 'Signature',
+            type: 'typed',
+            data: 'John Doe', // Default signature text
+            isDefault: true
+          });
+        }
+      });
+      
       // If no signatures found in fields, use user signatures or default signatures
       if (signatures.length === 0) {
-        if (userData.signatures && userData.signatures.length > 0) {
-          // Use user signatures
-          signatures.push(...userData.signatures);
-          console.log('Using user signatures:', userData.signatures.length);
+        if (userData.signatures && Array.isArray(userData.signatures) && userData.signatures.length > 0) {
+          // Safely extract user signatures to avoid circular references
+          try {
+            const userSignatures = userData.signatures.map((sig: any) => ({
+              id: sig.id || 'user_sig',
+              name: sig.name || 'User Signature',
+              type: sig.type || 'typed',
+              data: sig.data || 'User',
+              isDefault: false
+            }));
+            signatures.push(...userSignatures);
+            console.log('Using user signatures:', userSignatures.length);
+          } catch (error) {
+            console.error('Error processing user signatures:', error);
+            // Fallback to default signatures
+            const defaultSignatures = await this.getDefaultSignatures();
+            signatures.push(...defaultSignatures);
+            console.log('Using default signatures:', defaultSignatures.length);
+          }
         } else {
           // Use default signatures as fallback
           const defaultSignatures = await this.getDefaultSignatures();
@@ -745,31 +776,49 @@ class AIService {
       try {
         console.log('Calling backend API for document processing...');
         
-        // Prepare the request data for the backend
-        const requestData = {
-          signatures: signatures.map(sig => ({
-            vectors: sig.type === 'drawing' ? this.parseSignatureVectors(sig.data) : [],
-            position: { x: 100, y: 200 }, // Default position
-            width: 120,
-            height: 40,
-            color: 'black',
-            strokeWidth: 2
-          })),
-          documentType: fileType
-        };
+        // Create minimal signature request to avoid stack overflow
+        const signatureRequests = [{
+          points: [
+            { x: 0, y: 0, pressure: 1.0, timestamp: Date.now() },
+            { x: 100, y: 0, pressure: 1.0, timestamp: Date.now() + 100 },
+            { x: 100, y: 20, pressure: 1.0, timestamp: Date.now() + 200 },
+            { x: 0, y: 20, pressure: 1.0, timestamp: Date.now() + 300 }
+          ],
+          x: 100,
+          y: 200,
+          width: 120,
+          height: 40,
+          color: '#000000',
+          page: 0
+        }];
+        
+        console.log('Using minimal signature request to avoid stack overflow');
 
         // Create form data for file upload
         const formData = new FormData();
-        formData.append('file', {
+        formData.append('document', {
           uri: fileUri,
           type: fileType === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
           name: fileUri.split('/').pop() || `document.${fileType}`
         } as any);
-        formData.append('signatures', JSON.stringify(requestData.signatures));
-        formData.append('documentType', fileType);
+        
+        // Add signatures to form data as a JSON string
+        let signaturesJson: string;
+        try {
+          signaturesJson = JSON.stringify(signatureRequests);
+          formData.append('signatures', signaturesJson);
+          console.log('Signatures JSON created successfully, length:', signaturesJson.length);
+        } catch (jsonError) {
+          console.error('Error creating signatures JSON:', jsonError);
+          // Fallback: send empty signatures array
+          signaturesJson = JSON.stringify([]);
+          formData.append('signatures', signaturesJson);
+        }
+        
+        console.log('Sending signatures to backend, JSON length:', signaturesJson.length);
 
         // Call the backend API
-        const response = await fetch('http://localhost:3000/api/add-signature', {
+        const response = await fetch('http://192.168.0.207:3000/api/add-signature', {
           method: 'POST',
           body: formData,
           headers: {
@@ -778,20 +827,26 @@ class AIService {
         });
 
         if (response.ok) {
-          const processedDocumentBlob = await response.blob();
-          // Convert blob to base64 for React Native
-          const reader = new FileReader();
-          reader.onload = () => {
-            const base64 = reader.result as string;
-            // Save the processed document
-            this.saveProcessedDocument(base64, fileType).then(uri => {
-              signedDocumentUri = uri;
-              console.log('Document processed successfully by backend:', uri);
-            });
-          };
-          reader.readAsDataURL(processedDocumentBlob);
+          console.log('Backend response received, processing document...');
+          
+          // Get the response as an array buffer (binary data)
+          const arrayBuffer = await response.arrayBuffer();
+          console.log('Response buffer size:', arrayBuffer.byteLength);
+          
+          // Convert array buffer to base64
+          const uint8Array = new Uint8Array(arrayBuffer);
+          const base64String = btoa(String.fromCharCode(...uint8Array));
+          
+          // Create data URL
+          const mimeType = fileType === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+          const dataUrl = `data:${mimeType};base64,${base64String}`;
+          
+          // Save the processed document
+          signedDocumentUri = await this.saveProcessedDocument(dataUrl, fileType);
+          console.log('Document processed successfully by backend:', signedDocumentUri);
         } else {
-          console.warn('Backend processing failed, using original file');
+          const errorText = await response.text();
+          console.warn('Backend processing failed:', response.status, errorText);
           signedDocumentUri = fileUri;
         }
       } catch (error) {

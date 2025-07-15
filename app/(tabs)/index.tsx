@@ -5,17 +5,14 @@ import { router } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import aiService from '../../services/aiService';
+import { RecentDocument, recentDocumentsService } from '../../services/recentDocumentsService';
 
 export default function HomeScreen() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isTestingAI, setIsTestingAI] = useState(false);
   const [sharedFileInfo, setSharedFileInfo] = useState<any>(null);
-  const [recentDocuments] = useState([
-    { name: 'Employment Contract.docx', date: '2024-01-15' },
-    { name: 'Legal Waiver.pdf', date: '2024-01-10' },
-    { name: 'Application Form.docx', date: '2024-01-05' }
-  ]);
+  const [recentDocuments, setRecentDocuments] = useState<RecentDocument[]>([]);
+  const [isLoadingRecent, setIsLoadingRecent] = useState(true);
 
   useEffect(() => {
     // Check if app was opened with a shared file
@@ -34,7 +31,21 @@ export default function HomeScreen() {
       }
     };
 
+    // Load recent documents
+    const loadRecentDocuments = async () => {
+      try {
+        setIsLoadingRecent(true);
+        const documents = await recentDocumentsService.getRecentDocuments();
+        setRecentDocuments(documents);
+      } catch (error) {
+        console.error('Error loading recent documents:', error);
+      } finally {
+        setIsLoadingRecent(false);
+      }
+    };
+
     checkInitialFile();
+    loadRecentDocuments();
   }, []);
 
   const pickDocument = async () => {
@@ -93,32 +104,18 @@ export default function HomeScreen() {
     }
   };
 
-  const testAIConnection = async () => {
-    try {
-      setIsTestingAI(true);
-      console.log('Testing AI connection...');
-      
-      const result = await aiService.testAIConnection();
-      
-      if (result.success) {
-        Alert.alert(
-          'AI Test Successful', 
-          `AI is working!\n\nFields found: ${result.data?.formFields || 0}\nQuestions: ${result.data?.questions || 0}\nSignatures: ${result.data?.signatures || 0}`
-        );
-      } else {
-        Alert.alert('AI Test Failed', result.message);
+  const openRecentDocument = (document: RecentDocument) => {
+    // Navigate to document processor with the recent document
+    router.push({
+      pathname: '/document-processor',
+      params: {
+        uri: document.processedUri || document.originalUri,
+        name: document.name,
+        size: document.size,
+        type: document.type,
+        mimeType: document.type === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
       }
-    } catch (error) {
-      Alert.alert('Error', 'Failed to test AI connection');
-      console.error('AI test error:', error);
-    } finally {
-      setIsTestingAI(false);
-    }
-  };
-
-  const openRecentDocument = (document: any) => {
-    Alert.alert('Recent Document', `Opening ${document.name}`);
-    // In a real app, you would open the actual document
+    });
   };
 
   return (
@@ -163,17 +160,7 @@ export default function HomeScreen() {
             </Text>
           </TouchableOpacity>
 
-          {/* AI Test Button */}
-          <TouchableOpacity 
-            style={[styles.testButton, isTestingAI && styles.testButtonDisabled]}
-            onPress={testAIConnection}
-            disabled={isTestingAI}
-          >
-            <Ionicons name="bug" size={24} color={isTestingAI ? '#666' : '#FF9500'} />
-            <Text style={[styles.testButtonText, isTestingAI && styles.testButtonTextDisabled]}>
-              {isTestingAI ? 'Testing...' : 'Test AI Connection'}
-            </Text>
-          </TouchableOpacity>
+
         </View>
 
         {/* Features Section */}
@@ -221,18 +208,32 @@ export default function HomeScreen() {
             <Text style={styles.sectionTitle}>Recent Documents</Text>
             {recentDocuments.map((doc, index) => (
               <TouchableOpacity 
-                key={index} 
+                key={doc.id} 
                 style={styles.recentDocument}
                 onPress={() => openRecentDocument(doc)}
               >
                 <Ionicons name="document-text" size={24} color="#007AFF" />
                 <View style={styles.recentDocumentInfo}>
                   <Text style={styles.recentDocumentName}>{doc.name}</Text>
-                  <Text style={styles.recentDocumentDate}>{doc.date}</Text>
+                  <Text style={styles.recentDocumentDate}>
+                    {new Date(doc.processedAt).toLocaleDateString()} • {doc.type.toUpperCase()} • {Math.round(doc.size / 1024)}KB
+                  </Text>
                 </View>
                 <Ionicons name="chevron-forward" size={20} color="#666" />
               </TouchableOpacity>
             ))}
+          </View>
+        )}
+        
+        {/* Empty State for Recent Documents */}
+        {!isLoadingRecent && recentDocuments.length === 0 && (
+          <View style={styles.recentSection}>
+            <Text style={styles.sectionTitle}>Recent Documents</Text>
+            <View style={styles.emptyState}>
+              <Ionicons name="document-text" size={48} color="#ccc" />
+              <Text style={styles.emptyStateText}>No recent documents</Text>
+              <Text style={styles.emptyStateSubtext}>Process your first document to see it here</Text>
+            </View>
           </View>
         )}
       </ScrollView>
@@ -423,5 +424,24 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
     marginTop: 2,
+  },
+  emptyState: {
+    alignItems: 'center',
+    padding: 40,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    marginBottom: 8,
+  },
+  emptyStateText: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#666',
+    marginTop: 12,
+    marginBottom: 4,
+  },
+  emptyStateSubtext: {
+    fontSize: 14,
+    color: '#999',
+    textAlign: 'center',
   },
 });
