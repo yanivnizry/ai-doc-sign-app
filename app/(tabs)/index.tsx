@@ -5,6 +5,7 @@ import { router } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { aiService } from '../../services/aiService';
 import { RecentDocument, recentDocumentsService } from '../../services/recentDocumentsService';
 
 export default function HomeScreen() {
@@ -118,6 +119,22 @@ export default function HomeScreen() {
     });
   };
 
+  const testLLMConnection = async () => {
+    try {
+      setIsTestingAI(true);
+      const result = await aiService.testLLMConnection();
+      Alert.alert(
+        result.success ? '✅ Connection Successful' : '❌ Connection Failed',
+        result.message + (result.responseTime ? `\n\nResponse time: ${result.responseTime}ms` : ''),
+        [{ text: 'OK', style: 'default' }]
+      );
+    } catch (error) {
+      Alert.alert('Error', 'Failed to test LLM connection');
+    } finally {
+      setIsTestingAI(false);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView style={styles.scrollView}>
@@ -161,6 +178,21 @@ export default function HomeScreen() {
           </TouchableOpacity>
 
 
+        </View>
+
+        {/* AI Test Section */}
+        <View style={styles.featuresSection}>
+          <Text style={styles.sectionTitle}>AI Connection Test</Text>
+          <TouchableOpacity 
+            style={[styles.testButton, isTestingAI && styles.testButtonDisabled]}
+            onPress={testLLMConnection}
+            disabled={isTestingAI}
+          >
+            <Ionicons name="wifi" size={24} color={isTestingAI ? "#666" : "#FF9500"} />
+            <Text style={[styles.testButtonText, isTestingAI && styles.testButtonTextDisabled]}>
+              {isTestingAI ? 'Testing...' : 'Test LLM Connection'}
+            </Text>
+          </TouchableOpacity>
         </View>
 
         {/* Features Section */}

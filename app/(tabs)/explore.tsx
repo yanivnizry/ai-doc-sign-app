@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import React from 'react';
 import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { aiService } from '../../services/aiService';
 
 const ExploreScreen = () => {
   const features = [
@@ -148,12 +149,26 @@ const ExploreScreen = () => {
   const handleSetupAI = () => {
     Alert.alert(
       'Setup Real AI',
-      'To enable real AI functionality:\n\n1. Get Ollama from ollama.ai\n2. Create a .env file in the project root\n3. Add: EXPO_PUBLIC_LOCAL_LLM_URL=http://localhost:11434\n4. Restart the app',
+      'To enable real AI functionality:\n\n1. Install Ollama from ollama.ai\n2. Run: ollama pull llama2\n3. Start Ollama: ollama serve\n4. Create a .env file with:\n   EXPO_PUBLIC_LOCAL_LLM_URL=http://localhost:11434\n5. Restart the app',
       [
-        { text: 'Get API Key', onPress: () => console.log('Get API key') },
+        { text: 'Get Ollama', onPress: () => console.log('Get Ollama') },
+        { text: 'Test Connection', onPress: testLLMConnection },
         { text: 'OK', style: 'default' }
       ]
     );
+  };
+
+  const testLLMConnection = async () => {
+    try {
+      const result = await aiService.testLLMConnection();
+      Alert.alert(
+        result.success ? '✅ Connection Successful' : '❌ Connection Failed',
+        result.message + (result.responseTime ? `\n\nResponse time: ${result.responseTime}ms` : ''),
+        [{ text: 'OK', style: 'default' }]
+      );
+    } catch (error) {
+      Alert.alert('Error', 'Failed to test LLM connection');
+    }
   };
 
   return (

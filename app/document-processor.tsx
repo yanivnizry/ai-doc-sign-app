@@ -158,6 +158,17 @@ export default function DocumentProcessorScreen() {
       } else {
         console.log('No signatures found, will use default');
       }
+
+      // Add signature values from the filling step
+      if (analysis?.signatures) {
+        analysis.signatures.forEach(signature => {
+          const signatureValue = fieldValues[`signature_${signature.id}`];
+          if (signatureValue) {
+            userData[`signature_${signature.id}`] = signatureValue;
+            console.log(`Added signature value for ${signature.label}: ${signatureValue.substring(0, 50)}...`);
+          }
+        });
+      }
       
       console.log('Processing document with user data:', userData);
       
@@ -323,6 +334,24 @@ export default function DocumentProcessorScreen() {
         ))}
       </View>
 
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Signatures Required ({analysis?.signatures?.length || 0})</Text>
+        {analysis?.signatures && analysis.signatures.length > 0 ? (
+          analysis.signatures.map((signature) => (
+            <View key={signature.id} style={styles.fieldItem}>
+              <View style={styles.fieldHeader}>
+                <Ionicons name="create" size={20} color="#FF3B30" />
+                <Text style={styles.fieldLabel}>{signature.label || 'Signature'}</Text>
+                {signature.required && <Text style={styles.requiredBadge}>Required</Text>}
+              </View>
+              <Text style={styles.fieldType}>SIGNATURE</Text>
+            </View>
+          ))
+        ) : (
+          <Text style={styles.noFieldsText}>No signatures detected in this document.</Text>
+        )}
+      </View>
+
       <TouchableOpacity 
         style={styles.processButton}
         onPress={() => setCurrentStep('filling')}
@@ -470,6 +499,29 @@ export default function DocumentProcessorScreen() {
               {question.aiSuggestion && (
                 <Text style={styles.aiSuggestionText}>AI Suggestion: {question.aiSuggestion}</Text>
               )}
+            </View>
+          ))}
+        </View>
+      )}
+
+      {analysis?.signatures && analysis.signatures.length > 0 && (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Signatures Required ({analysis.signatures.length})</Text>
+          {analysis.signatures.map((signature) => (
+            <View key={signature.id} style={styles.fieldInputContainer}>
+              <View style={styles.fieldHeader}>
+                <Ionicons name="create" size={20} color="#FF3B30" />
+                <Text style={styles.fieldLabel}>{signature.label || 'Signature'}</Text>
+                {signature.required && <Text style={styles.requiredBadge}>Required</Text>}
+              </View>
+              
+              <SignatureDrawer
+                value={fieldValues[`signature_${signature.id}`]}
+                onSignatureChange={(signatureData: string) => 
+                  setFieldValues(prev => ({ ...prev, [`signature_${signature.id}`]: signatureData }))
+                }
+                label={signature.label || 'Signature'}
+              />
             </View>
           ))}
         </View>
