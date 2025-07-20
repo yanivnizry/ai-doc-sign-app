@@ -81,6 +81,17 @@ export interface AIProcessingResult {
   warnings?: string[];
 }
 
+// Add fetchWithTimeout helper OUTSIDE the class
+function fetchWithTimeout(resource: RequestInfo, options: any = {}) {
+  const { timeout = 15000 } = options;
+  return Promise.race([
+    fetch(resource, options),
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Timeout')), timeout)
+    )
+  ]);
+}
+
 class AIService {
   private userProfile: Record<string, any> = {};
 
@@ -185,7 +196,7 @@ class AIService {
    */
   private async analyzeContentWithAI(content: string, fileType: string): Promise<any> {
     const llmUrl = process.env.EXPO_PUBLIC_LOCAL_LLM_URL;
-    const model = process.env.EXPO_PUBLIC_LOCAL_LLM_MODEL || 'llama2';
+    const model = process.env.EXPO_PUBLIC_LOCAL_LLM_MODEL || 'llama3';
     const maxTokens = parseInt(process.env.EXPO_PUBLIC_LOCAL_LLM_MAX_TOKENS || '3000'); // Maps to num_predict in Ollama
 
     if (!llmUrl) {
@@ -197,25 +208,18 @@ class AIService {
       console.log('Making real AI API call to Local LLM...');
       console.log('LLM URL:', llmUrl);
       console.log('Model:', model);
-      
-      const response = await fetch(`${llmUrl}/api/generate`, {
+      const apiStart = Date.now();
+      // Reduce prompt size for debugging
+      const promptContent = content.substring(0, 200);
+      const response = await fetchWithTimeout(`${llmUrl}/api/generate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           model: model,
-          prompt: `Analyze this ${fileType.toUpperCase()} document and extract:
+          prompt: `Analyze this ${fileType.toUpperCase()} document and extract the following information. Respond ONLY with a valid JSON object matching this schema and no other text:
 
-1. Document language (ISO 639-1 code)
-2. Document category (legal, job_application, medical, financial, academic, etc.)
-3. Key insights about the document content
-4. Risk assessment (low/medium/high) with specific issues and recommendations
-5. Form fields that need to be filled (with types, labels, requirements)
-6. Questions that need answers
-7. Signature areas required
-
-Return the analysis in this exact JSON format:
 {
   "language": "en",
   "category": "legal",
@@ -229,48 +233,37 @@ Return the analysis in this exact JSON format:
   "formFields": [
     {
       "id": "1",
-      "type": "text",
       "label": "Field Label",
+      "type": "text",
       "required": true,
-      "position": {"x": 100, "y": 150, "width": 200, "height": 30},
+      "position": { "x": 100, "y": 150, "width": 200, "height": 30 },
       "page": 1,
       "confidence": 0.95,
       "suggestions": ["suggestion1", "suggestion2"]
     }
   ],
-  "questions": [
-    {
-      "id": "1",
-      "text": "Question text",
-      "type": "yes_no",
-      "position": {"x": 100, "y": 200, "width": 300, "height": 30},
-      "page": 1,
-      "confidence": 0.90,
-      "aiSuggestion": "AI suggestion"
-    }
-  ],
-  "signatures": [
-    {
-      "id": "1",
-      "label": "Signature Label",
-      "required": true,
-      "position": {"x": 100, "y": 300, "width": 150, "height": 50},
-      "page": 1
-    }
-  ]
+  "questions": [...],
+  "signatures": [...]
 }
 
-Document content to analyze:
-${content.substring(0, 2000)}`,
-          stream: false,
-          options: {
-            temperature: 0.0,
-            top_p: 0.9,
-            num_predict: maxTokens
-          }
-        })
-      });
+For each form field, be sure to include the position (x, y) and block size (width, height) in the 'position' object. Do not omit these fields.
 
+Document content to analyze:
+${promptContent}`,
+          stream: false,
+          temperature: 0.0,
+          top_p: 0.9,
+          num_predict: maxTokens
+        }),
+        timeout: 90000
+      });
+      const apiEnd = Date.now();
+      console.log(`LLM API call took ${(apiEnd - apiStart) / 1000}s`);
+
+      // Type check for timeout or error
+      if (!(response instanceof Response)) {
+        throw new Error('LLM API call failed or timed out');
+      }
       if (!response.ok) {
         throw new Error(`Local LLM API error: ${response.status} - ${response.statusText}`);
       }
@@ -369,7 +362,7 @@ ${content.substring(0, 2000)}`,
    */
   async testLLMConnection(): Promise<{ success: boolean; message: string; responseTime?: number }> {
     const llmUrl = process.env.EXPO_PUBLIC_LOCAL_LLM_URL;
-    const model = process.env.EXPO_PUBLIC_LOCAL_LLM_MODEL || 'llama2';
+    const model = process.env.EXPO_PUBLIC_LOCAL_LLM_MODEL || 'llama3';
 
     if (!llmUrl) {
       return {
@@ -421,10 +414,8 @@ ${content.substring(0, 2000)}`,
           model: model,
           prompt: 'Hello, this is a test. Please respond with "Connection successful"',
           stream: false,
-          options: {
-            temperature: 0.0,
-            num_predict: 50
-          }
+          temperature: 0.0,
+          num_predict: 50
         })
       });
 
@@ -627,7 +618,8 @@ ${content.substring(0, 2000)}`,
         keyInsights: aiAnalysis.keyInsights,
         riskAssessment: aiAnalysis.riskAssessment
       };
-      
+      const endTime = Date.now();
+      console.log(`Total document analysis time: ${(endTime - startTime) / 1000}s`);
       console.log('Document analysis completed:', analysis.formFields.length, 'fields found');
       console.log('Detected fields:', analysis.formFields.map(f => ({ label: f.label, type: f.type })));
       return analysis;
@@ -1188,11 +1180,29 @@ ${content.substring(0, 2000)}`,
           type: fileType === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
           name: fileUri.split('/').pop() || `document.${fileType}`
         } as any);
-        
-        // Add signatures to form data as a JSON string
+        // Add signatures to form data as a JSON string array
         let signaturesJson: string;
         try {
-          signaturesJson = JSON.stringify(signatureRequests);
+          // Check for circular references in signatureRequests
+          const seen = new WeakSet();
+          const isCircular = (obj: any): boolean => {
+            if (obj && typeof obj === 'object') {
+              if (seen.has(obj)) return true;
+              seen.add(obj);
+              for (const key in obj) {
+                if (Object.prototype.hasOwnProperty.call(obj, key)) {
+                  if (isCircular(obj[key])) return true;
+                }
+              }
+            }
+            return false;
+          };
+          if (isCircular(signatureRequests)) {
+            console.warn('Circular reference detected in signatureRequests, sending empty array to backend.');
+            signaturesJson = JSON.stringify([]);
+          } else {
+            signaturesJson = JSON.stringify(signatureRequests);
+          }
           formData.append('signatures', signaturesJson);
           console.log('Signatures JSON created successfully, length:', signaturesJson.length);
         } catch (jsonError) {
@@ -1201,11 +1211,10 @@ ${content.substring(0, 2000)}`,
           signaturesJson = JSON.stringify([]);
           formData.append('signatures', signaturesJson);
         }
-        
         console.log('Sending signatures to backend, JSON length:', signaturesJson.length);
 
-        // Call the backend API
-        const response = await fetch('http://192.168.0.207:3000/api/add-signature', {
+        const backendUrl = process.env.EXPO_PUBLIC_BACKEND_API_URL;
+        const response = await fetch(`${backendUrl}/api/add-signature`, {
           method: 'POST',
           body: formData,
           headers: {
@@ -1215,26 +1224,27 @@ ${content.substring(0, 2000)}`,
 
         if (response.ok) {
           console.log('Backend response received, processing document...');
-          
           // Get the response as an array buffer (binary data)
           const arrayBuffer = await response.arrayBuffer();
           console.log('Response buffer size:', arrayBuffer.byteLength);
-          
           // Convert array buffer to base64
           const uint8Array = new Uint8Array(arrayBuffer);
           const base64String = btoa(String.fromCharCode(...uint8Array));
-          
           // Create data URL
           const mimeType = fileType === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
           const dataUrl = `data:${mimeType};base64,${base64String}`;
-          
           // Save the processed document
           signedDocumentUri = await this.saveProcessedDocument(dataUrl, fileType);
           console.log('Document processed successfully by backend:', signedDocumentUri);
         } else {
-          const errorText = await response.text();
-          console.warn('Backend processing failed:', response.status, errorText);
-          
+          // Try to parse backend error response as JSON
+          let errorText = await response.text();
+          try {
+            const errorJson = JSON.parse(errorText);
+            console.warn('Backend processing failed:', response.status, errorJson.error, errorJson.details || '');
+          } catch (e) {
+            console.warn('Backend processing failed:', response.status, errorText);
+          }
           // Check if it's a Hebrew encoding error
           if (errorText.includes('WinAnsi cannot encode') && errorText.includes('ל')) {
             console.log('Hebrew encoding error detected, using fallback processing');
@@ -1287,7 +1297,7 @@ ${content.substring(0, 2000)}`,
     }
 
     const llmUrl = process.env.EXPO_PUBLIC_LOCAL_LLM_URL;
-    const model = process.env.EXPO_PUBLIC_LOCAL_LLM_MODEL || 'llama2';
+    const model = process.env.EXPO_PUBLIC_LOCAL_LLM_MODEL || 'llama3';
     const maxTokens = parseInt(process.env.EXPO_PUBLIC_LOCAL_LLM_MAX_TOKENS || '3000');
 
     if (!llmUrl) {
@@ -1307,17 +1317,8 @@ ${content.substring(0, 2000)}`,
         },
         body: JSON.stringify({
           model: model,
-          prompt: `Analyze this ${fileType.toUpperCase()} document and extract:
+          prompt: `Analyze this ${fileType.toUpperCase()} document and extract the following information. Respond ONLY with a valid JSON object matching this schema and no other text:
 
-1. Document language (ISO 639-1 code)
-2. Document category (legal, job_application, medical, financial, academic, etc.)
-3. Key insights about the document content
-4. Risk assessment (low/medium/high) with specific issues and recommendations
-5. Form fields that need to be filled (with types, labels, requirements)
-6. Questions that need answers
-7. Signature areas required
-
-Return the analysis in this exact JSON format:
 {
   "language": "en",
   "category": "legal",
@@ -1331,45 +1332,27 @@ Return the analysis in this exact JSON format:
   "formFields": [
     {
       "id": "1",
-      "type": "text",
       "label": "Field Label",
+      "type": "text",
       "required": true,
-      "position": {"x": 100, "y": 150, "width": 200, "height": 30},
+      "position": { "x": 100, "y": 150, "width": 200, "height": 30 },
       "page": 1,
       "confidence": 0.95,
       "suggestions": ["suggestion1", "suggestion2"]
     }
   ],
-  "questions": [
-    {
-      "id": "1",
-      "text": "Question text",
-      "type": "yes_no",
-      "position": {"x": 100, "y": 200, "width": 300, "height": 30},
-      "page": 1,
-      "confidence": 0.90,
-      "aiSuggestion": "AI suggestion"
-    }
-  ],
-  "signatures": [
-    {
-      "id": "1",
-      "label": "Signature Label",
-      "required": true,
-      "position": {"x": 100, "y": 300, "width": 150, "height": 50},
-      "page": 1
-    }
-  ]
+  "questions": [...],
+  "signatures": [...]
 }
+
+For each form field, be sure to include the position (x, y) and block size (width, height) in the 'position' object. Do not omit these fields.
 
 Document content to analyze:
 ${content.substring(0, 2000)}`,
           stream: false,
-          options: {
-            temperature: 0.0,
-            top_p: 0.9,
-            num_predict: maxTokens
-          }
+          temperature: 0.0,
+          top_p: 0.9,
+          num_predict: maxTokens
         })
       });
 

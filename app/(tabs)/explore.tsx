@@ -125,7 +125,7 @@ const ExploreScreen = () => {
       category: 'AI Models',
       capabilities: [
         'Local LLM integration',
-        'Configurable AI models (llama2, mistral, etc.)',
+        'Configurable AI models (llama3, mistral, etc.)',
         'Customizable processing parameters',
         'Fallback analysis when AI unavailable',
         'Real-time processing optimization',
@@ -149,7 +149,7 @@ const ExploreScreen = () => {
   const handleSetupAI = () => {
     Alert.alert(
       'Setup Real AI',
-      'To enable real AI functionality:\n\n1. Install Ollama from ollama.ai\n2. Run: ollama pull llama2\n3. Start Ollama: ollama serve\n4. Create a .env file with:\n   EXPO_PUBLIC_LOCAL_LLM_URL=http://localhost:11434\n5. Restart the app',
+      'To enable real AI functionality:\n\n1. Install Ollama from ollama.ai\n2. Run: ollama pull llama3\n3. Start Ollama: ollama serve\n4. Create a .env file with:\n   EXPO_PUBLIC_LOCAL_LLM_URL=http://localhost:11434\n5. Restart the app',
       [
         { text: 'Get Ollama', onPress: () => console.log('Get Ollama') },
         { text: 'Test Connection', onPress: testLLMConnection },

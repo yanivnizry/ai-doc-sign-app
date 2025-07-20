@@ -1,0 +1,1 @@
+{"success":false,"error":"Failed to process document","details":"Failed to add signature to PDF: Failed to parse PDF document (line:0 col:270 offset=135): No PDF header found"}
