@@ -9,6 +9,9 @@
     "scheme": "aidocsign",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "router": {
+      "appRoot": "./app"
+    },
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
@@ -105,7 +108,10 @@
         {
           "iCloudContainerEnvironment": "Production"
         }
-      ]
+      ],
+      "expo-font",
+      "expo-secure-store",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true
